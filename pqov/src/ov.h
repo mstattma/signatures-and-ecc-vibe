@@ -148,6 +148,21 @@ void ov_publicmap_pkc( unsigned char *z, const cpk_t *pk, const unsigned char *w
 int ov_sign( uint8_t *signature, const sk_t *sk, const uint8_t *message, size_t mlen );
 
 ///
+/// @brief Signing function with user-provided salt.
+///
+/// @param[out] signature  - the signature (w only, _PUB_N_BYTE bytes).
+/// @param[in]  sk         - the secret key.
+/// @param[in]  message    - the message to be signed.
+/// @param[in]  mlen       - the length of the message.
+/// @param[in]  user_salt  - optional user-provided salt (any length), or NULL for random salt.
+/// @param[in]  user_salt_len - length of user_salt. Ignored if user_salt is NULL.
+/// @return 0 for success. -1 otherwise.
+///
+#define ov_sign_salt PQOV_NAMESPACE(ov_sign_salt)
+int ov_sign_salt( uint8_t *signature, const sk_t *sk, const uint8_t *message, size_t mlen,
+                  const uint8_t *user_salt, size_t user_salt_len );
+
+///
 /// @brief Verifying function.
 ///
 /// @param[in]  message   - the message.

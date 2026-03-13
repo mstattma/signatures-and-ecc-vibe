@@ -31,12 +31,30 @@
 
 
 int ov_sign( uint8_t *signature, const sk_t *sk, const uint8_t *message, size_t mlen ) {
+    return ov_sign_salt( signature, sk, message, mlen, NULL, 0 );
+}
+
+int ov_sign_salt( uint8_t *signature, const sk_t *sk, const uint8_t *message, size_t mlen,
+                  const uint8_t *user_salt, size_t user_salt_len ) {
     // allocate temporary storage.
     uint8_t mat_l1[_O * _O_BYTE];
+
+    // Generate or derive the _SALT_BYTE bytes embedded in the digest.
 #if _SALT_BYTE > 0
     uint8_t salt[_SALT_BYTE];
-    randombytes( salt, _SALT_BYTE );
+    if ( user_salt != NULL && user_salt_len > 0 ) {
+        // Derive salt from user-provided data by hashing it down to _SALT_BYTE.
+        hash_ctx hctx_salt;
+        hash_init(&hctx_salt);
+        hash_update(&hctx_salt, user_salt, user_salt_len);
+        hash_final_digest(salt, _SALT_BYTE, &hctx_salt);
+    } else {
+        randombytes( salt, _SALT_BYTE );
+    }
+#else
+    (void)user_salt; (void)user_salt_len;
 #endif
+
     #if defined(_VALGRIND_)
 #if _SALT_BYTE > 0
     VALGRIND_MAKE_MEM_UNDEFINED(salt, _SALT_BYTE );  // mark secret data as undefined data
@@ -49,18 +67,33 @@ int ov_sign( uint8_t *signature, const sk_t *sk, const uint8_t *message, size_t 
     uint8_t y[_PUB_N_BYTE];
     uint8_t x_o1[_O_BYTE];
 
-    hash_ctx h_m_salt_secret;
-    hash_ctx h_vinegar_copy;
-    // The computation:  H(M||salt)  -->   y  --C-map-->   x   --T-->   w
-    hash_init  (&h_m_salt_secret);
-    hash_update(&h_m_salt_secret, message, mlen);
+    // Build the target vector y = H(message)[0.._HASH_EFFECTIVE_BYTE-1] || salt[0.._SALT_BYTE-1]
+    // This is the value that P(w) must equal.
+    {
+        hash_ctx hctx_msg;
+        hash_init(&hctx_msg);
+        hash_update(&hctx_msg, message, mlen);
 #if _SALT_BYTE > 0
-    hash_update(&h_m_salt_secret, salt, _SALT_BYTE);
+        // Hash produces _HASH_EFFECTIVE_BYTE bytes (the hash portion of the digest)
+        hash_final_digest( y, _HASH_EFFECTIVE_BYTE, &hctx_msg);
+        // Append salt as the last _SALT_BYTE bytes of the target
+        memcpy( y + _HASH_EFFECTIVE_BYTE, salt, _SALT_BYTE );
+#else
+        // No salt: entire digest is hash
+        hash_final_digest( y, _PUB_M_BYTE, &hctx_msg);
 #endif
-    hash_ctx_copy(&h_vinegar_copy, &h_m_salt_secret);
-    hash_final_digest( y, _PUB_M_BYTE, &h_m_salt_secret);    // H(M||salt)
+    }
 
-    hash_update(&h_vinegar_copy, sk->sk_seed, LEN_SKSEED );   // H(M||salt||sk_seed ...
+    // Derive vinegar values deterministically: H(message || salt || sk_seed || ctr)
+    hash_ctx h_vinegar_base;
+    hash_ctx h_vinegar_copy;
+    hash_init  (&h_vinegar_base);
+    hash_update(&h_vinegar_base, message, mlen);
+#if _SALT_BYTE > 0
+    hash_update(&h_vinegar_base, salt, _SALT_BYTE);
+#endif
+    hash_update(&h_vinegar_base, sk->sk_seed, LEN_SKSEED );
+    hash_ctx_copy(&h_vinegar_copy, &h_vinegar_base);
 
     unsigned n_attempt = 0;
     while ( MAX_ATTEMPT_VINEGAR > n_attempt ) {
@@ -68,8 +101,8 @@ int ov_sign( uint8_t *signature, const sk_t *sk, const uint8_t *message, size_t 
         n_attempt++;
         hash_ctx h_vinegar;
         hash_ctx_copy(&h_vinegar, &h_vinegar_copy);
-        hash_update(&h_vinegar, &ctr, 1 );                  // H(M||salt||sk_seed||ctr ...
-        hash_final_digest( vinegar, _V_BYTE, &h_vinegar);   // H(M||salt||sk_seed||ctr)
+        hash_update(&h_vinegar, &ctr, 1 );
+        hash_final_digest( vinegar, _V_BYTE, &h_vinegar);
 
         #if defined(_VALGRIND_)
         VALGRIND_MAKE_MEM_UNDEFINED(vinegar, _V_BYTE );  // mark secret data as undefined data
@@ -124,31 +157,36 @@ int ov_sign( uint8_t *signature, const sk_t *sk, const uint8_t *message, size_t 
     gfmat_prod(y, sk->O, _V_BYTE, _O, x_o1 );
     gf256v_add(w, y, _V_BYTE );
 
-    // return: signature <- w || salt.
-#if _SALT_BYTE > 0
-    memcpy( signature + _PUB_N_BYTE, salt, _SALT_BYTE );
-#endif
-
+    // Signature is just w. Salt is embedded in the digest P(w).
     return 0;
 }
 
 
+/// Verify by recovering digest from signature via P(w), then checking
+/// that the hash portion matches H(message) and the salt portion is consistent.
+/// digest_ck = P(w) = H(message)[0.._HASH_EFFECTIVE_BYTE-1] || salt[0.._SALT_BYTE-1]
 static
-int _ov_verify( const uint8_t *message, size_t mlen, const uint8_t *salt, const unsigned char *digest_ck ) {
+int _ov_verify( const uint8_t *message, size_t mlen, const unsigned char *digest_ck ) {
+    // Compute H(message), truncated to _HASH_EFFECTIVE_BYTE
     unsigned char correct[_PUB_M_BYTE];
     hash_ctx hctx;
     hash_init(&hctx);
     hash_update(&hctx, message, mlen);
 #if _SALT_BYTE > 0
-    hash_update(&hctx, salt, _SALT_BYTE);
+    hash_final_digest(correct, _HASH_EFFECTIVE_BYTE, &hctx);
 #else
-    (void)salt;
+    hash_final_digest(correct, _PUB_M_BYTE, &hctx);
 #endif
-    hash_final_digest(correct, _PUB_M_BYTE, &hctx);  // H( message || salt )
 
-    // check consistency.
+    // Check that the hash portion of the recovered digest matches.
+    // The salt portion (last _SALT_BYTE bytes) is not checked -- it is
+    // whatever random value the signer embedded.
     unsigned char cc = 0;
+#if _SALT_BYTE > 0
+    for (unsigned i = 0; i < _HASH_EFFECTIVE_BYTE; i++) {
+#else
     for (unsigned i = 0; i < _PUB_M_BYTE; i++) {
+#endif
         cc |= (digest_ck[i] ^ correct[i]);
     }
     return (0 == cc) ? 0 : -1;
@@ -165,7 +203,7 @@ int ov_verify( const uint8_t *message, size_t mlen, const uint8_t *signature, co
     unsigned char digest_ck[_PUB_M_BYTE];
     ov_publicmap( digest_ck, pk->pk, signature );
 
-    return _ov_verify( message, mlen, signature + _PUB_N_BYTE, digest_ck );
+    return _ov_verify( message, mlen, digest_ck );
 }
 #endif
 
@@ -204,7 +242,7 @@ int ov_expand_and_verify( const uint8_t *message, size_t mlen, const uint8_t *si
     #ifdef _SAVE_MEMORY_
     unsigned char digest_ck[_PUB_M_BYTE];
     ov_publicmap_pkc( digest_ck, cpk, signature );
-    return _ov_verify( message, mlen, signature + _PUB_N_BYTE, digest_ck );
+    return _ov_verify( message, mlen, digest_ck );
     #else
     int rc;
 

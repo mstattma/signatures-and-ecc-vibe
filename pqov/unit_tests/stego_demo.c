@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: CC0 OR Apache-2.0
 /**
- * stego_demo.c - Demonstrates UOV signature with message recovery
+ * stego_demo.c - Demonstrates UOV signature with salt-in-digest message recovery
  * for bandwidth-constrained steganographic channels.
  *
  * This demo shows:
  * 1. Key generation (public key exchanged out-of-band)
- * 2. Signing: produces a compact signature (the ONLY thing transmitted)
- * 3. Message recovery: verifier recovers the hash digest from the signature
- *    using the public key, WITHOUT receiving the digest separately
- * 4. Verification: confirms the signature is valid for the original message
+ * 2. Signing: produces a compact signature w (the ONLY thing transmitted)
+ * 3. Message recovery: verifier recovers the digest P(w) = H(msg)[truncated] || salt
+ * 4. Verification: confirms the hash portion matches H(message)
+ * 5. User-provided salt: demonstrates signing with a caller-supplied salt
  */
 
 #include <stdio.h>
@@ -33,17 +33,26 @@ static void print_hex(const char *label, const uint8_t *data, size_t len) {
 
 int main(void) {
     printf("=================================================================\n");
-    printf("  UOV Signature with Message Recovery - Stego Channel Demo\n");
+    printf("  UOV Signature with Salt-in-Digest Recovery - Stego Channel Demo\n");
     printf("=================================================================\n\n");
 
     printf("Parameters: %s\n", OV_ALGNAME);
     printf("  Field:      GF(%d)\n", _GFSIZE);
     printf("  n = %d (v=%d, o=%d)\n", _PUB_N, _V, _O);
-    printf("  Signature:  %d bytes = %d bits\n", OV_SIGNATUREBYTES, OV_SIGNATUREBYTES * 8);
+    printf("  Signature:  %d bytes = %d bits (w only, no appended salt)\n",
+           OV_SIGNATUREBYTES, OV_SIGNATUREBYTES * 8);
+    printf("  Digest from P(w): %d bytes = %d bits\n", _PUB_M_BYTE, _PUB_M_BYTE * 8);
+#if _SALT_BYTE > 0
+    printf("    Hash portion:   %d bytes = %d bits (%d-bit collision resistance)\n",
+           _HASH_EFFECTIVE_BYTE, _HASH_EFFECTIVE_BYTE * 8, _HASH_EFFECTIVE_BYTE * 8 / 2);
+    printf("    Salt portion:   %d bytes = %d bits (embedded in digest)\n",
+           _SALT_BYTE, _SALT_BYTE * 8);
+#else
+    printf("    No salt (entire digest is hash, %d-bit collision resistance)\n",
+           _PUB_M_BYTE * 8 / 2);
+#endif
     printf("  Public key: %d bytes (classic)\n", OV_PK_UNCOMPRESSED_BYTES);
     printf("  Public key: %d bytes (compressed)\n", OV_PK_COMPRESSED_BYTES);
-    printf("  Hash recovered from P(s): %d bytes = %d bits\n", _PUB_M_BYTE, _PUB_M_BYTE * 8);
-    printf("  Salt in signature: %d bytes\n", _SALT_BYTE);
     printf("\n");
 
     // ============================================================
@@ -64,33 +73,27 @@ int main(void) {
         return 1;
     }
     printf("  Key pair generated successfully.\n");
-    printf("  Public key: %d bytes (exchanged out-of-band, e.g., via QR code or URL)\n",
-           CRYPTO_PUBLICKEYBYTES);
+    printf("  Public key: %d bytes (exchanged out-of-band)\n", CRYPTO_PUBLICKEYBYTES);
     printf("\n");
 
     // ============================================================
-    // Step 2: Sender signs a message
+    // Step 2: Sender signs a message (random salt)
     // ============================================================
-    printf("--- Step 2: Sender signs a message ---\n");
+    printf("--- Step 2: Sender signs a message (random salt) ---\n");
 
-    // The "message" is some data whose hash we want to authenticate.
-    // In the stego use case, this could be an image fingerprint, a document hash, etc.
     const char *original_message = "This is the original content to be authenticated via steganography.";
     size_t mlen = strlen(original_message);
 
-    // Compute the hash of the message (this is what gets "embedded" in the signature)
+    // Show the message hash for reference
     uint8_t message_hash[_PUB_M_BYTE];
     {
-        // The UOV signing process internally computes H(message || salt),
-        // which maps to _PUB_M_BYTE output. We compute it here just for display.
         hash_ctx hctx;
         hash_init(&hctx);
         hash_update(&hctx, (const uint8_t *)original_message, mlen);
-        // Note: the actual hash includes the salt, which is in the signature
         hash_final_digest(message_hash, _PUB_M_BYTE, &hctx);
     }
     printf("  Message: \"%s\"\n", original_message);
-    print_hex("H(message) [first bytes]", message_hash, _PUB_M_BYTE);
+    print_hex("H(message)", message_hash, _PUB_M_BYTE);
     printf("\n");
 
     // Sign the message
@@ -103,17 +106,17 @@ int main(void) {
     }
 
     printf("  Signature generated!\n");
-    print_hex("Signature (w || salt)", signature, siglen);
+    print_hex("Signature w", signature, siglen);
     printf("    w (public map input): %d bytes = %d bits\n", _PUB_N_BYTE, _PUB_N_BYTE * 8);
-    printf("    salt:                 %d bytes = %d bits\n", _SALT_BYTE, _SALT_BYTE * 8);
     printf("    TOTAL transmitted:    %d bytes = %d bits\n", OV_SIGNATUREBYTES, OV_SIGNATUREBYTES * 8);
+    printf("    (salt is inside P(w), NOT appended to signature)\n");
     printf("\n");
 
     // ============================================================
     // Step 3: The stego channel
     // ============================================================
     printf("--- Step 3: Stego Channel Transmission ---\n");
-    printf("  ONLY the signature is transmitted through the stego channel.\n");
+    printf("  ONLY the signature w is transmitted through the stego channel.\n");
     printf("  The original message is NOT transmitted.\n");
     printf("  Transmitted payload: %d bits (before outer ECC)\n", OV_SIGNATUREBYTES * 8);
     printf("\n");
@@ -123,50 +126,83 @@ int main(void) {
     // ============================================================
     printf("--- Step 4: Receiver - Message Recovery ---\n");
 
-    // The receiver has:
-    //   - The signature (received via stego channel)
-    //   - The public key (received out-of-band)
-    //   - The original message (they have their own copy, or can reconstruct it)
-
     // Step 4a: Recover the digest from the signature using the public map
     uint8_t recovered_digest[_PUB_M_BYTE];
-    const uint8_t *w = signature;  // first _PUB_N_BYTE bytes are the signature vector
-    ov_publicmap(recovered_digest, ((const pk_t *)pk)->pk, w);
+    ov_publicmap(recovered_digest, ((const pk_t *)pk)->pk, signature);
 
-    print_hex("Recovered digest P(s)", recovered_digest, _PUB_M_BYTE);
-    printf("  This is H(message || salt) = the authenticated hash!\n");
-    printf("  Recovered %d bits of hash from %d-bit signature.\n",
-           _PUB_M_BYTE * 8, OV_SIGNATUREBYTES * 8);
+    print_hex("Recovered digest P(w)", recovered_digest, _PUB_M_BYTE);
+#if _SALT_BYTE > 0
+    print_hex("  Hash portion", recovered_digest, _HASH_EFFECTIVE_BYTE);
+    print_hex("  Salt portion", recovered_digest + _HASH_EFFECTIVE_BYTE, _SALT_BYTE);
+#endif
     printf("\n");
 
     // Step 4b: Verify the signature against the original message
     printf("--- Step 4b: Verification ---\n");
-
-    // The verifier needs the original message to check:
-    //   P(s) == H(message || salt)
-    // where salt is extracted from the signature
     rc = crypto_sign_verify(signature, siglen, (const uint8_t *)original_message, mlen, pk);
     printf("  Verification result: %s\n", rc == 0 ? "VALID" : "INVALID");
     printf("\n");
 
-    // Step 4c: Demonstrate that the recovered digest matches
+    // Step 4c: Demonstrate that the hash portion of the recovered digest matches
     printf("--- Step 4c: Digest Comparison ---\n");
-    uint8_t expected_digest[_PUB_M_BYTE];
+    uint8_t expected_hash[_PUB_M_BYTE];
     {
         hash_ctx hctx;
         hash_init(&hctx);
         hash_update(&hctx, (const uint8_t *)original_message, mlen);
 #if _SALT_BYTE > 0
-        const uint8_t *salt_from_sig = signature + _PUB_N_BYTE;
-        hash_update(&hctx, salt_from_sig, _SALT_BYTE);
+        hash_final_digest(expected_hash, _HASH_EFFECTIVE_BYTE, &hctx);
+#else
+        hash_final_digest(expected_hash, _PUB_M_BYTE, &hctx);
 #endif
-        hash_final_digest(expected_digest, _PUB_M_BYTE, &hctx);
     }
-    print_hex("Expected  H(msg||salt)", expected_digest, _PUB_M_BYTE);
-    print_hex("Recovered P(s)        ", recovered_digest, _PUB_M_BYTE);
-    int match = (memcmp(recovered_digest, expected_digest, _PUB_M_BYTE) == 0);
+#if _SALT_BYTE > 0
+    print_hex("Expected  H(msg)[truncated]", expected_hash, _HASH_EFFECTIVE_BYTE);
+    print_hex("Recovered P(w)[hash part]  ", recovered_digest, _HASH_EFFECTIVE_BYTE);
+    int match = (memcmp(recovered_digest, expected_hash, _HASH_EFFECTIVE_BYTE) == 0);
+#else
+    print_hex("Expected  H(msg)", expected_hash, _PUB_M_BYTE);
+    print_hex("Recovered P(w)  ", recovered_digest, _PUB_M_BYTE);
+    int match = (memcmp(recovered_digest, expected_hash, _PUB_M_BYTE) == 0);
+#endif
     printf("  Match: %s\n", match ? "YES - message recovery confirmed!" : "NO - ERROR!");
     printf("\n");
+
+#if _SALT_BYTE > 0
+    // ============================================================
+    // Step 5: Demonstrate user-provided salt
+    // ============================================================
+    printf("--- Step 5: Signing with user-provided salt ---\n");
+
+    const char *user_salt_str = "my-custom-salt-value-any-length";
+    printf("  User salt: \"%s\" (%zu bytes)\n", user_salt_str, strlen(user_salt_str));
+
+    uint8_t signature2[OV_SIGNATUREBYTES];
+    rc = ov_sign_salt(signature2, (const sk_t *)sk, (const uint8_t *)original_message, mlen,
+                      (const uint8_t *)user_salt_str, strlen(user_salt_str));
+    if (rc != 0) {
+        fprintf(stderr, "signing with user salt failed: %d\n", rc);
+        return 1;
+    }
+
+    // Recover digest and show the salt portion
+    uint8_t recovered2[_PUB_M_BYTE];
+    ov_publicmap(recovered2, ((const pk_t *)pk)->pk, signature2);
+    print_hex("Recovered digest P(w)", recovered2, _PUB_M_BYTE);
+    print_hex("  Salt portion (derived from user salt)", recovered2 + _HASH_EFFECTIVE_BYTE, _SALT_BYTE);
+
+    // Verify
+    rc = crypto_sign_verify(signature2, OV_SIGNATUREBYTES, (const uint8_t *)original_message, mlen, pk);
+    printf("  Verification: %s\n", rc == 0 ? "VALID" : "INVALID");
+
+    // Sign again with the same user salt -- should produce the same signature (deterministic)
+    uint8_t signature3[OV_SIGNATUREBYTES];
+    rc = ov_sign_salt(signature3, (const sk_t *)sk, (const uint8_t *)original_message, mlen,
+                      (const uint8_t *)user_salt_str, strlen(user_salt_str));
+    int same_sig = (memcmp(signature2, signature3, OV_SIGNATUREBYTES) == 0);
+    printf("  Same salt + same message = same signature: %s\n", same_sig ? "YES (deterministic)" : "NO (ERROR!)");
+    printf("\n");
+#endif
 
     // ============================================================
     // Summary
@@ -175,13 +211,19 @@ int main(void) {
     printf("  SUMMARY FOR STEGO CHANNEL DESIGN\n");
     printf("=================================================================\n");
     printf("  What goes through the stego channel:\n");
-    printf("    - Signature only: %d bytes = %d bits\n", OV_SIGNATUREBYTES, OV_SIGNATUREBYTES * 8);
-    printf("    - NO separate digest needed (recovered via public map)\n");
+    printf("    - Signature w only: %d bytes = %d bits\n", OV_SIGNATUREBYTES, OV_SIGNATUREBYTES * 8);
+    printf("    - NO salt appended (salt is inside the recovered digest)\n");
     printf("\n");
-    printf("  What the verifier recovers:\n");
-    printf("    - Authenticated hash: %d bytes = %d bits\n", _PUB_M_BYTE, _PUB_M_BYTE * 8);
-    printf("    - This hash has %d-bit collision resistance\n", _PUB_M_BYTE * 8 / 2);
-    printf("    - And %d-bit preimage resistance\n", _PUB_M_BYTE * 8);
+    printf("  What the verifier recovers via P(w):\n");
+    printf("    - Full digest: %d bytes = %d bits\n", _PUB_M_BYTE, _PUB_M_BYTE * 8);
+#if _SALT_BYTE > 0
+    printf("    - Hash portion: %d bytes = %d bits (%d-bit collision resistance)\n",
+           _HASH_EFFECTIVE_BYTE, _HASH_EFFECTIVE_BYTE * 8, _HASH_EFFECTIVE_BYTE * 8 / 2);
+    printf("    - Salt portion: %d bytes = %d bits (multi-target protection)\n",
+           _SALT_BYTE, _SALT_BYTE * 8);
+#else
+    printf("    - All hash, no salt (%d-bit collision resistance)\n", _PUB_M_BYTE * 8 / 2);
+#endif
     printf("\n");
     printf("  What goes out-of-band (one-time setup):\n");
     printf("    - Public key: %d bytes\n", CRYPTO_PUBLICKEYBYTES);

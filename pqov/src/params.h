@@ -106,13 +106,18 @@
 /// length of seed for secret key, in # bytes
 #define LEN_SKSEED 32
 
-/// length of salt for a signature, in # bytes (configurable via -D_SALT_BYTE=N)
+/// length of salt embedded in the digest, in # bytes (configurable via -D_SALT_BYTE=N)
+/// The salt is embedded inside the recovered digest P(w), NOT appended to the signature.
+/// Signature = w only (_PUB_N_BYTE bytes). Digest layout: H(msg)[0..effective-1] || salt
 #ifndef _SALT_BYTE
-#define _SALT_BYTE 4
+#define _SALT_BYTE 2
 #endif
 
-/// length of a signature
-#define OV_SIGNATUREBYTES (_PUB_N_BYTE + _SALT_BYTE )
+/// effective hash bytes in the digest (total digest minus salt)
+#define _HASH_EFFECTIVE_BYTE (_PUB_M_BYTE - _SALT_BYTE)
+
+/// length of a signature (w only, salt is inside the digest recovered via P(w))
+#define OV_SIGNATUREBYTES (_PUB_N_BYTE)
 
 #define N_TRIANGLE_TERMS(n_var) ((n_var)*((n_var)+1)/2)
 

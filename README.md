@@ -1,75 +1,92 @@
 # UOV Signatures for Bandwidth-Constrained Steganographic Channels
 
-This project implements compact post-quantum digital signatures based on [UOV (Oil and Vinegar)](https://www.pqov.org/) with **message recovery**, designed for steganographic channels where bandwidth is extremely limited (~500-1000 usable bits).
+This project implements compact post-quantum digital signatures based on [UOV (Oil and Vinegar)](https://www.pqov.org/) with **salt-in-digest message recovery**, designed for steganographic channels where bandwidth is extremely limited (~400-500 usable bits).
 
-The key insight: UOV signatures have **inherent message recovery** -- the verifier can recover the hash digest directly from the signature by evaluating the public map `P(s)`, eliminating the need to transmit the digest separately. Only the signature travels through the stego channel.
+The key insight: UOV signatures have **inherent message recovery** -- the verifier can recover the hash digest directly from the signature by evaluating the public map `P(w)`. We exploit this by embedding a random salt inside the recovered digest, so the salt never needs to be transmitted. The signature is just `w` -- nothing else.
 
 ## Overview
 
 ```
 Sender                          Stego Channel              Receiver
-                                (noisy, ~500-1000 bits)
+                                (noisy, ~400-500 bits)
   message ──► sign(sk, msg)                                  has: pk (out-of-band)
               │                                                    message (own copy)
               ▼                                                    │
          ┌──────────┐         ┌──────────────┐                    ▼
-         │signature │ ──────► │  stego embed  │ ──────► P(s) = H(msg||salt)
-         │(432 bits)│         │  (image)      │         recovered digest!
-         └──────────┘         └──────────────┘         verify: P(s) == H(msg||salt) ✓
-              │
-              ▼
-         NO digest transmitted
-         (recovered from signature)
+         │signature │ ──────► │  stego embed  │ ──────► P(w) = H(msg)[trunc] || salt
+         │  w only  │         │  (image)      │         ▲                       ▲
+         │(400 bits)│         └──────────────┘         hash verified        salt recovered
+         └──────────┘                                  against H(msg)      (not transmitted!)
 ```
 
-**What goes through the stego channel:** Only the signature (432 or 536 bits with default 4-byte salt).
+**What goes through the stego channel:** Only the signature vector `w` (400 or 504 bits).
 
 **What goes out-of-band (one-time setup):** The public key (~4-50 KB).
 
-## Signature Structure
+## Signature Structure and Salt-in-Digest
 
-A UOV signature consists of two concatenated parts:
+A UOV signature consists of a single vector `w`:
 
 ```
-signature = w || salt
-            │      │
-            │      └─ random nonce, _SALT_BYTE bytes (default: 4 bytes = 32 bits)
-            │
-            └─ signature vector, _PUB_N_BYTE bytes (n field elements)
-               the verifier evaluates P(w) to recover h = H(message || salt)
+signature = w                 (_PUB_N_BYTE bytes, the ONLY transmitted data)
+
+recovered digest = P(w)       (_PUB_M_BYTE bytes, recovered by the verifier)
+                 = H(msg)[0 .. _HASH_EFFECTIVE_BYTE-1] || salt[0 .. _SALT_BYTE-1]
+                   ▲                                       ▲
+                   hash of message, truncated               random nonce, embedded
+                   (verified against H(msg))                (NOT transmitted)
 ```
 
-**The signature vector `w`** is the core cryptographic payload. It is a vector of `n` elements in GF(q) that satisfies `P(w) = H(message || salt)`, where `P` is the public multivariate quadratic map. The verifier recovers the hash digest by evaluating `P(w)` -- this is the message recovery property.
+**How it works:**
 
-**The salt** is a random nonce generated during signing and appended to the signature in the clear. The verifier extracts the salt from the end of the signature and uses it to compute `H(message || salt)` for comparison against `P(w)`. The salt serves two purposes:
+1. **Signing**: The signer computes `H(message)` truncated to `_HASH_EFFECTIVE_BYTE = _PUB_M_BYTE - _SALT_BYTE` bytes, appends `_SALT_BYTE` bytes of random salt, forming the target vector `y`. Then it finds `w` such that `P(w) = y`. The signature is just `w`.
 
-1. **Derandomized signing**: The salt feeds into the deterministic derivation of vinegar variable candidates via `H(message || salt || sk_seed || ctr)`. A fresh salt ensures a fresh target hash `h`, which helps when the internal linear system happens to be singular for a given set of vinegar values.
+2. **Verification**: The verifier evaluates `P(w)` to recover the full digest. It computes `H(message)` truncated to `_HASH_EFFECTIVE_BYTE` bytes and compares against the first `_HASH_EFFECTIVE_BYTE` bytes of the recovered digest. The last `_SALT_BYTE` bytes are the salt -- they are recovered but not checked (any value is valid).
 
-2. **Multi-target attack resistance**: Without a salt, an attacker observing multiple signatures for different messages could batch collision-finding across all of them. The salt forces each signature to target a unique hash value, making multi-target forgery no cheaper than single-target.
+3. **Salt benefits without bandwidth cost**: The salt occupies bits inside the fixed-size digest `P(w)`, not extra bytes in the signature. This provides multi-target attack resistance at zero transmission cost, at the expense of reducing the effective hash length (and thus collision resistance) by `_SALT_BYTE` bytes.
 
-The salt does **not** affect core UOV security (direct algebraic attacks, Kipnis-Shamir, intersection attacks). It only impacts multi-target collision resistance. Under an adaptive chosen-message attack (EUF-CMA), the attacker can request signatures on messages of their choice and then attempt to forge a signature on a new message. If the attacker obtains `2^k` signatures (on distinct messages), the effective collision resistance is reduced by `k` bits due to multi-target birthday attacks. With a 4-byte (32-bit) salt, the attacker would need to collect `2^32` signatures on distinct messages before gaining any advantage -- far beyond typical usage. Without a salt, the attacker can pre-compute collisions across all messages they intend to query, so the full collision resistance (`o * log2(q) / 2` bits) must absorb the multi-target penalty.
+### User-provided salt
 
-**Total signature size** = `n` field element bytes + salt bytes:
+The `ov_sign_salt()` function accepts an optional user-provided salt of any length. If provided, it is hashed down to `_SALT_BYTE` bytes and embedded in the digest. This enables:
 
-| Parameter set | `w` (vector) | salt (default) | **Total** |
-|--------------|-------------|---------------|-----------|
-| `PARAM=80` | 50 bytes = 400 bits | 4 bytes = 32 bits | **54 bytes = 432 bits** |
-| `PARAM=100` | 63 bytes = 504 bits | 4 bytes = 32 bits | **67 bytes = 536 bits** |
+- **Deterministic signing**: same message + same salt = same signature
+- **Application-specific nonces**: the caller can provide a timestamp, counter, or other context
+- **Arbitrary salt length**: the salt is hashed, so any length works
 
-The salt length is configurable at build time via `SALT=` (see [Building](#building)). Increasing the salt increases the signature by the same amount:
+```c
+// Random salt (default):
+ov_sign(signature, sk, message, mlen);
 
-| Salt length | PARAM=80 signature | PARAM=100 signature |
-|------------|-------------------|-------------------|
-| 0 bytes | 50 B = **400 bits** | 63 B = **504 bits** |
-| 4 bytes (default) | 54 B = **432 bits** | 67 B = **536 bits** |
-| 8 bytes | 58 B = 464 bits | 71 B = 568 bits |
-| 16 bytes (upstream default) | 66 B = 528 bits | 79 B = 632 bits |
+// User-provided salt (any length):
+ov_sign_salt(signature, sk, message, mlen, my_salt, my_salt_len);
+```
 
-**`SALT=0` note:** With no salt, the hash target is `H(message)` rather than `H(message || salt)`. This means signing the same message twice produces the same signature (fully deterministic signing), and an attacker who can request signatures on chosen messages (adaptive CMA) can attempt multi-target collision attacks across all queried messages. If the attacker requests `2^k` signatures, the effective collision resistance drops from `o * log2(q) / 2` bits to `o * log2(q) / 2 - k` bits. For `PARAM=80` (80-bit collision resistance), an attacker requesting `2^20` (~1 million) signatures would still face `2^60` work to find a collision. Use `SALT=0` only when the expected number of signing queries is small enough that this reduction is acceptable.
+If `user_salt` is NULL or `user_salt_len` is 0, a random salt is generated.
+
+### Digest layout for each parameter set
+
+With the default 2-byte salt:
+
+| Parameter | Digest (P(w)) | Hash portion | Salt portion | Collision resistance |
+|-----------|--------------|-------------|-------------|---------------------|
+| `PARAM=80` | 20 bytes = 160 bits | 18 bytes = 144 bits | 2 bytes = 16 bits | 72 bits |
+| `PARAM=100` | 25 bytes = 200 bits | 23 bytes = 184 bits | 2 bytes = 16 bits | 92 bits |
+
+### Signature sizes at different salt configurations
+
+The signature is always `w` only (`_PUB_N_BYTE` bytes). The salt does NOT affect signature size -- it trades off collision resistance within the fixed digest.
+
+| Salt | PARAM=80 sig | PARAM=80 collision bits | PARAM=100 sig | PARAM=100 collision bits |
+|------|-------------|------------------------|--------------|------------------------|
+| 0 B | 50 B = **400 bits** | 80 | 63 B = **504 bits** | 100 |
+| 2 B (default) | 50 B = **400 bits** | 72 | 63 B = **504 bits** | 92 |
+| 4 B | 50 B = **400 bits** | 64 | 63 B = **504 bits** | 84 |
+
+The signature size is always the same regardless of salt. More salt = more multi-target protection but less collision resistance.
 
 ## Parameter Sets
 
-This project provides two custom reduced-security parameter sets optimized for minimal signature size, plus access to all standard NIST parameter sets. All signature sizes below use the default 4-byte salt.
+All signature sizes are `_PUB_N_BYTE` bytes (just `w`), independent of salt configuration.
 
 ### Custom Parameter Sets (for stego channels)
 
@@ -80,8 +97,9 @@ This project provides two custom reduced-security parameter sets optimized for m
 | **v (vinegar vars)** | 30 | 38 |
 | **o (oil vars)** | 20 | 25 |
 | **n = v + o** | 50 | 63 |
-| **Signature size** | 54 bytes = **432 bits** | 67 bytes = **536 bits** |
-| **Recovered hash** | 160 bits (80-bit collision resistance) | 200 bits (100-bit collision resistance) |
+| **Signature size** | 50 bytes = **400 bits** | 63 bytes = **504 bits** |
+| **Digest from P(w)** | 20 bytes = 160 bits | 25 bytes = 200 bits |
+| **Collision resistance** | 72 bits (with default 2B salt) | 92 bits (with default 2B salt) |
 | **Public key (classic)** | 25,500 bytes | 50,400 bytes |
 | **Public key (compressed)** | 4,216 bytes | 8,141 bytes |
 | **Params define** | `_OV256_50_20` | `_OV256_63_25` |
@@ -90,14 +108,14 @@ These parameters were selected using the included security estimator (`uov_secur
 
 ### Standard NIST Parameter Sets
 
-The standard NIST parameter sets are also available. Note that the upstream UOV implementation uses a 16-byte salt; with the default 4-byte salt in this project, the NIST signatures are 12 bytes smaller than upstream. Use `SALT=16` to match the upstream signature sizes exactly.
+| Parameter | NIST Level | `PARAM=` | Field | (n, o) | Signature | Public Key (classic) |
+|-----------|-----------|----------|-------|--------|-----------|---------------------|
+| uov-Is | 1 | `1` (default) | GF(16) | (160, 64) | 80 B = 640 bits | 412,160 B |
+| uov-Ip | 1 | `3` | GF(256) | (112, 44) | 112 B = 896 bits | 278,432 B |
+| uov-III | 3 | `4` | GF(256) | (184, 72) | 184 B = 1472 bits | 1,225,440 B |
+| uov-V | 5 | `5` | GF(256) | (244, 96) | 244 B = 1952 bits | 2,869,440 B |
 
-| Parameter | NIST Level | `PARAM=` | Field | (n, o) | Signature (4B salt) | Signature (16B salt, upstream) | Public Key (classic) |
-|-----------|-----------|----------|-------|--------|-------------------|-------------------------------|---------------------|
-| uov-Is | 1 | `1` (default) | GF(16) | (160, 64) | 84 B = 672 bits | 96 B = 768 bits | 412,160 B |
-| uov-Ip | 1 | `3` | GF(256) | (112, 44) | 116 B = 928 bits | 128 B = 1024 bits | 278,432 B |
-| uov-III | 3 | `4` | GF(256) | (184, 72) | 188 B = 1504 bits | 200 B = 1600 bits | 1,225,440 B |
-| uov-V | 5 | `5` | GF(256) | (244, 96) | 248 B = 1984 bits | 260 B = 2080 bits | 2,869,440 B |
+Note: These are smaller than upstream because the salt is now inside the digest, not appended. Use `SALT=0` to disable salt entirely.
 
 ## Building
 
@@ -117,14 +135,11 @@ sudo apt install build-essential libssl-dev
 ```bash
 cd pqov
 
-# 80-bit security (432-bit signature with default 4-byte salt)
+# 80-bit security (400-bit signature, default 2-byte salt-in-digest)
 make clean && make stego_demo PARAM=80
 
-# 100-bit security (536-bit signature with default 4-byte salt)
+# 100-bit security (504-bit signature)
 make clean && make stego_demo PARAM=100
-
-# Standard NIST Level 1 (672-bit signature with default 4-byte salt)
-make clean && make stego_demo PARAM=1
 
 # Run it
 ./stego_demo
@@ -132,17 +147,16 @@ make clean && make stego_demo PARAM=1
 
 ### Configuring the salt length
 
-The salt length defaults to 4 bytes. Override it with the `SALT=` parameter:
+The salt length defaults to 2 bytes (embedded in the digest). Override it with `SALT=`:
 
 ```bash
-# No salt -- minimal signature, deterministic signing (400-bit signature for PARAM=80)
+# No salt -- full collision resistance, deterministic signing
 make clean && make stego_demo PARAM=80 SALT=0
 
-# Use 8-byte salt (464-bit signature for PARAM=80)
-make clean && make stego_demo PARAM=80 SALT=8
+# 4-byte salt -- more multi-target protection, less collision resistance
+make clean && make stego_demo PARAM=80 SALT=4
 
-# Use 16-byte salt to match upstream UOV (528-bit signature for PARAM=80)
-make clean && make stego_demo PARAM=80 SALT=16
+# Signature size is always the same (400 bits for PARAM=80) regardless of SALT
 ```
 
 The `SALT=` parameter works with all targets (`stego_demo`, `test`, `sign_api-test`, etc.) and all `PARAM=` values.
@@ -163,9 +177,6 @@ make clean && make test
 
 # Run with NIST Level 1 GF(256) variant
 make clean && make test PARAM=3
-
-# Run with upstream-compatible 16-byte salt
-make clean && make test PARAM=80 SALT=16
 ```
 
 ### Build with key compression variants
@@ -196,23 +207,20 @@ make stego_demo PARAM=80 VARIANT=3
 
 ### Build parameter reference
 
-All signature sizes below use the default 4-byte salt. Add `(SALT - 4)` bytes for other salt lengths.
-
 | `PARAM=` | Params | Security | Signature |
 |----------|--------|----------|-----------|
-| `80` | GF(256), n=50, o=20 | ~80 bits | 432 bits |
-| `100` | GF(256), n=63, o=25 | ~100 bits | 536 bits |
-| `1` (default) | GF(16), n=160, o=64 | ~128 bits (NIST L1) | 672 bits |
-| `3` | GF(256), n=112, o=44 | ~176 bits (NIST L1) | 928 bits |
-| `4` | GF(256), n=184, o=72 | ~256 bits (NIST L3) | 1504 bits |
-| `5` | GF(256), n=244, o=96 | ~384 bits (NIST L5) | 1984 bits |
+| `80` | GF(256), n=50, o=20 | ~80 bits | 400 bits |
+| `100` | GF(256), n=63, o=25 | ~100 bits | 504 bits |
+| `1` (default) | GF(16), n=160, o=64 | ~128 bits (NIST L1) | 640 bits |
+| `3` | GF(256), n=112, o=44 | ~176 bits (NIST L1) | 896 bits |
+| `4` | GF(256), n=184, o=72 | ~256 bits (NIST L3) | 1472 bits |
+| `5` | GF(256), n=244, o=96 | ~384 bits (NIST L5) | 1952 bits |
 
-| `SALT=` | Salt length | Notes |
-|---------|-------------|-------|
-| `0` | 0 bytes | No salt, deterministic signing, minimal size |
-| (omitted) | 4 bytes = 32 bits | Default, suitable for low-volume stego channels |
-| `8` | 8 bytes = 64 bits | Good for moderate signature volumes |
-| `16` | 16 bytes = 128 bits | Matches upstream UOV / NIST submission |
+| `SALT=` | Salt in digest | Collision resistance (PARAM=80) | Notes |
+|---------|---------------|-------------------------------|-------|
+| `0` | 0 bytes | 80 bits | No salt, full hash, deterministic |
+| (omitted) | 2 bytes = 16 bits | 72 bits | Default, multi-target protected |
+| `4` | 4 bytes = 32 bits | 64 bits | Stronger multi-target protection |
 
 | `VARIANT=` | Key format | Notes |
 |------------|-----------|-------|
@@ -224,28 +232,29 @@ All signature sizes below use the default 4-byte salt. Add `(SALT - 4)` bytes fo
 
 UOV has an inherent message recovery property that most descriptions overlook:
 
-1. **Signing**: The signer computes `h = H(message || salt)`, then finds a signature vector `w` such that `P(w) = h`, where `P` is the public multivariate quadratic map. The signature is `w || salt`.
+1. **Signing**: The signer builds a target `y = H(message)[truncated] || salt`, then finds a signature vector `w` such that `P(w) = y`, where `P` is the public multivariate quadratic map.
 
-2. **Verification**: The verifier splits the signature into `w` and `salt`, evaluates `P(w)` to recover `h`, then computes `H(message || salt)` independently and checks that they match.
+2. **Verification**: The verifier evaluates `P(w)` to recover `y`, computes `H(message)` truncated to `_HASH_EFFECTIVE_BYTE` bytes, and checks that it matches the first part of the recovered `y`. The last `_SALT_BYTE` bytes are ignored (any salt value is accepted).
 
-3. **The key observation**: The verifier does not need `h` to be transmitted -- it is **recovered** from the signature by evaluating `P(w)`. This means:
-   - The signature alone is sufficient for the stego channel payload
-   - The recovered `h` is `o * log2(q)` bits (160 bits for `PARAM=80`, 200 bits for `PARAM=100`)
-   - Collision resistance equals half the hash length (80 or 100 bits respectively)
+3. **Why this is bandwidth-optimal**: The digest `P(w)` has a fixed size of `o * log2(q)` bits regardless of what we put in it. By putting the salt inside those bits rather than appending it to the signature, we get multi-target protection for free -- without increasing the transmitted data.
 
-The relevant code path in the UOV reference implementation:
+The relevant code path:
 
 ```c
-// In ov.c, ov_verify():
-ov_publicmap(digest_ck, pk->pk, signature);  // Recover h = P(w)
-// Then compare digest_ck against H(message || salt)
+// Signing (ov.c):
+// Build target: y = H(msg)[0..effective-1] || salt
+hash_final_digest(y, _HASH_EFFECTIVE_BYTE, &hctx_msg);
+memcpy(y + _HASH_EFFECTIVE_BYTE, salt, _SALT_BYTE);
+// Find w such that P(w) = y ... signature is just w.
+
+// Verification (ov.c):
+// Recover y = P(w), check hash portion matches H(msg)
+ov_publicmap(digest_ck, pk->pk, signature);
+hash_final_digest(correct, _HASH_EFFECTIVE_BYTE, &hctx);
+// Compare correct[0.._HASH_EFFECTIVE_BYTE-1] against digest_ck[0.._HASH_EFFECTIVE_BYTE-1]
 ```
 
-The `stego_demo.c` program demonstrates this explicitly by:
-1. Generating a key pair
-2. Signing a message
-3. Recovering the digest from the signature using `ov_publicmap()`
-4. Independently computing `H(message || salt)` and confirming they match
+The `stego_demo.c` program demonstrates this explicitly, including signing with user-provided salts.
 
 ## Security Estimator
 
@@ -260,11 +269,6 @@ The Python script `uov_security_estimator.py` estimates UOV security against all
 python3 uov_security_estimator.py
 ```
 
-This outputs:
-- Security estimates for all NIST reference parameter sets
-- A search for minimal-signature parameters at 80-bit and 100-bit security
-- Detailed attack complexity breakdowns
-
 The custom parameter sets were chosen as the smallest signatures where all attack complexities exceed the target:
 
 | Attack | PARAM=80 complexity | PARAM=100 complexity |
@@ -272,10 +276,10 @@ The custom parameter sets were chosen as the smallest signatures where all attac
 | Direct algebraic | >>80 bits | >>100 bits |
 | Kipnis-Shamir | >>80 bits | >>100 bits |
 | Intersection | >80 bits | >100 bits |
-| Collision forgery | 80.0 bits | 100.0 bits |
+| Collision forgery | 80.0 bits (SALT=0) / 72.0 bits (SALT=2) | 100.0 bits / 92.0 bits |
 | **Bottleneck** | Collision forgery | Collision forgery |
 
-The bottleneck in both cases is collision forgery (birthday bound), which is `q^(o/2) = 256^(o/2)` = `2^(4*o)`. For o=20 this is `2^80`, for o=25 this is `2^100`.
+The bottleneck is collision forgery at `2^(effective_hash_bits / 2)`. With the default 2-byte salt, this is `2^72` for PARAM=80 and `2^92` for PARAM=100. The salt-in-digest trades some collision resistance for multi-target attack protection without increasing signature size.
 
 ## Stego Channel Architecture (Planned)
 
@@ -283,26 +287,26 @@ The full pipeline (outer ECC not yet implemented):
 
 ```
 Sender:
-  message ──► UOV sign ──► [w || salt]
-                                │
-                                ▼
-                           [outer RS-ECC]  (adds redundancy for bit flips/erasures)
-                                │
-                                ▼
-                           [interleaver]   (spreads burst errors)
-                                │
-                                ▼
-                           [stego embed]   (hide in cover image)
+  message ──► UOV sign ──► [w]
+                             │
+                             ▼
+                        [outer RS-ECC]  (adds redundancy for bit flips/erasures)
+                             │
+                             ▼
+                        [interleaver]   (spreads burst errors)
+                             │
+                             ▼
+                        [stego embed]   (hide in cover image)
 
 Receiver:
   stego image ──► [stego extract] ──► [deinterleave] ──► [RS-ECC decode]
                                                               │
                                                               ▼
-                                                         [w || salt]
+                                                         [w]
                                                               │
                                                               ▼
-                                                         P(w) = recovered hash
-                                                         verify vs H(msg||salt) ✓
+                                                         P(w) = H(msg)[trunc] || salt
+                                                         verify hash portion vs H(msg) ✓
 ```
 
 ## Project Structure
@@ -314,29 +318,31 @@ Receiver:
 └── pqov/                         # UOV reference implementation (modified)
     ├── Makefile                  # Modified: added PARAM=80/100, SALT=, stego_demo target
     ├── src/
-    │   ├── params.h              # Modified: added custom params, configurable salt (default 4B)
-    │   ├── ov.c                  # Core sign/verify (ov_publicmap = message recovery)
-    │   ├── ov.h                  # API declarations
+    │   ├── params.h              # Modified: custom params, salt-in-digest, _HASH_EFFECTIVE_BYTE
+    │   ├── ov.c                  # Modified: salt-in-digest signing/verify, ov_sign_salt()
+    │   ├── ov.h                  # Modified: added ov_sign_salt() declaration
     │   ├── sign.c                # NIST API wrappers
     │   └── ...
     └── unit_tests/
         ├── sign_api-test.c       # Standard sign/verify test (500 iterations)
-        └── stego_demo.c          # Message recovery demo for stego channel
+        └── stego_demo.c          # Salt-in-digest message recovery demo
 ```
 
 ### Files modified from upstream pqov
 
 | File | Changes |
 |------|---------|
-| `pqov/src/params.h` | Added `_OV256_50_20` (80-bit) and `_OV256_63_25` (100-bit) parameter definitions; updated preprocessor guard; changed `_SALT_BYTE` default from 16 to 4 and made it overridable via `-D_SALT_BYTE=N` |
-| `pqov/Makefile` | Added `PARAM=80` and `PARAM=100` to parameter selection; added `SALT=` build variable; added `stego_demo` build target |
+| `pqov/src/params.h` | Added `_OV256_50_20` (80-bit) and `_OV256_63_25` (100-bit) parameter definitions; salt-in-digest architecture (`OV_SIGNATUREBYTES = _PUB_N_BYTE`, `_HASH_EFFECTIVE_BYTE`); configurable `_SALT_BYTE` default 2 |
+| `pqov/src/ov.c` | Rewrote `ov_sign` / `_ov_verify` for salt-in-digest: target is `H(msg)[trunc] \|\| salt`, verification checks only hash portion; added `ov_sign_salt()` for user-provided salt |
+| `pqov/src/ov.h` | Added `ov_sign_salt()` declaration |
+| `pqov/Makefile` | Added `PARAM=80`, `PARAM=100`, `SALT=` build variables; added `stego_demo` target |
 
 ### Files added
 
 | File | Description |
 |------|-------------|
 | `uov_security_estimator.py` | Estimates UOV security against all known attacks, searches for optimal parameters |
-| `pqov/unit_tests/stego_demo.c` | Demonstrates message recovery: sign, recover digest via `ov_publicmap()`, verify match |
+| `pqov/unit_tests/stego_demo.c` | Demonstrates salt-in-digest message recovery, user-provided salt, deterministic signing |
 
 ## Threat Model
 
@@ -346,6 +352,14 @@ Receiver:
 - **Security target**: Existential unforgeability under adaptive chosen-message attack (EUF-CMA)
 - **Public key**: Exchanged out-of-band (up to ~1 MB acceptable)
 - **One image = one message**
+
+### Salt and multi-target security under CMA
+
+The salt embedded in the digest provides multi-target attack resistance. Under CMA, the attacker can request signatures on chosen messages. Without a salt, the attacker can pre-compute collisions across all messages they intend to query -- with `2^k` queries, collision resistance drops by `k` bits. The salt forces each signature to target a unique digest value, preventing this batching.
+
+With `SALT=0` (no salt), signing is fully deterministic and the full `_PUB_M_BYTE * 8 / 2` bits of collision resistance apply to single-target attacks. Multi-target attacks reduce this by `log2(num_queries)` bits.
+
+With the default `SALT=2` (16-bit salt), each query targets a unique digest and multi-target batching requires `2^16` queries on the same message with different salts (which doesn't happen since the signer chooses the salt randomly). The trade-off is that base collision resistance is reduced by `_SALT_BYTE * 8 / 2` bits.
 
 ## References
 
