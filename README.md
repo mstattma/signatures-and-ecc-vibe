@@ -47,7 +47,7 @@ signature = w || salt
 
 2. **Multi-target attack resistance**: Without a salt, an attacker observing multiple signatures for different messages could batch collision-finding across all of them. The salt forces each signature to target a unique hash value, making multi-target forgery no cheaper than single-target.
 
-The salt does **not** affect core UOV security (direct algebraic attacks, Kipnis-Shamir, intersection attacks). It only impacts multi-target collision resistance. For a passive eavesdropper seeing `2^k` signatures, the effective collision resistance is reduced by `k` bits. With a 4-byte (32-bit) salt, an attacker would need to observe `2^32` distinct signatures before gaining any advantage -- far beyond typical stego channel usage.
+The salt does **not** affect core UOV security (direct algebraic attacks, Kipnis-Shamir, intersection attacks). It only impacts multi-target collision resistance. Under an adaptive chosen-message attack (EUF-CMA), the attacker can request signatures on messages of their choice and then attempt to forge a signature on a new message. If the attacker obtains `2^k` signatures (on distinct messages), the effective collision resistance is reduced by `k` bits due to multi-target birthday attacks. With a 4-byte (32-bit) salt, the attacker would need to collect `2^32` signatures on distinct messages before gaining any advantage -- far beyond typical usage. Without a salt, the attacker can pre-compute collisions across all messages they intend to query, so the full collision resistance (`o * log2(q) / 2` bits) must absorb the multi-target penalty.
 
 **Total signature size** = `n` field element bytes + salt bytes:
 
@@ -65,7 +65,7 @@ The salt length is configurable at build time via `SALT=` (see [Building](#build
 | 8 bytes | 58 B = 464 bits | 71 B = 568 bits |
 | 16 bytes (upstream default) | 66 B = 528 bits | 79 B = 632 bits |
 
-**`SALT=0` note:** With no salt, the hash target is `H(message)` rather than `H(message || salt)`. This means signing the same message twice produces the same signature (fully deterministic signing), and an attacker observing multiple signatures can attempt multi-target collision attacks across all distinct messages. This is acceptable when the number of signed messages is small (a few thousand or less) and the use case does not require non-repudiation of distinct signing events. For the stego channel use case with a passive eavesdropper and low message volume, `SALT=0` is a reasonable choice to minimize bandwidth.
+**`SALT=0` note:** With no salt, the hash target is `H(message)` rather than `H(message || salt)`. This means signing the same message twice produces the same signature (fully deterministic signing), and an attacker who can request signatures on chosen messages (adaptive CMA) can attempt multi-target collision attacks across all queried messages. If the attacker requests `2^k` signatures, the effective collision resistance drops from `o * log2(q) / 2` bits to `o * log2(q) / 2 - k` bits. For `PARAM=80` (80-bit collision resistance), an attacker requesting `2^20` (~1 million) signatures would still face `2^60` work to find a collision. Use `SALT=0` only when the expected number of signing queries is small enough that this reduction is acceptable.
 
 ## Parameter Sets
 
@@ -340,9 +340,10 @@ Receiver:
 
 ## Threat Model
 
-- **Attacker**: Passive eavesdropper (observes images but does not modify them)
+- **Attacker**: Adaptive chosen-message attacker (EUF-CMA). The attacker can request signatures on messages of their choice and then attempts to forge a valid signature on a new message. This is the standard security model for digital signatures.
 - **Channel**: Noisy steganographic channel with bit flips and erasures
 - **Goal**: Authenticate a hash digest (e.g., image fingerprint) through the stego channel
+- **Security target**: Existential unforgeability under adaptive chosen-message attack (EUF-CMA)
 - **Public key**: Exchanged out-of-band (up to ~1 MB acceptable)
 - **One image = one message**
 
