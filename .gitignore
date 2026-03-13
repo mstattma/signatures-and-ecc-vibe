@@ -1,0 +1,10 @@
+*.o
+*.exe
+pqov/stego_demo
+pqov/sign_api-test
+pqov/sign_api-benchmark
+pqov/rec-sign-benchmark
+pqov/PQCgenKAT_sign
+*.req
+*.rsp
+massif.out.*
