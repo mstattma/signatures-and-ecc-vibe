@@ -151,13 +151,15 @@ int main(void) {
 
     // Step 4c: Demonstrate that the recovered digest matches
     printf("--- Step 4c: Digest Comparison ---\n");
-    const uint8_t *salt_from_sig = signature + _PUB_N_BYTE;
     uint8_t expected_digest[_PUB_M_BYTE];
     {
         hash_ctx hctx;
         hash_init(&hctx);
         hash_update(&hctx, (const uint8_t *)original_message, mlen);
+#if _SALT_BYTE > 0
+        const uint8_t *salt_from_sig = signature + _PUB_N_BYTE;
         hash_update(&hctx, salt_from_sig, _SALT_BYTE);
+#endif
         hash_final_digest(expected_digest, _PUB_M_BYTE, &hctx);
     }
     print_hex("Expected  H(msg||salt)", expected_digest, _PUB_M_BYTE);

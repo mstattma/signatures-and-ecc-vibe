@@ -33,10 +33,14 @@
 int ov_sign( uint8_t *signature, const sk_t *sk, const uint8_t *message, size_t mlen ) {
     // allocate temporary storage.
     uint8_t mat_l1[_O * _O_BYTE];
+#if _SALT_BYTE > 0
     uint8_t salt[_SALT_BYTE];
     randombytes( salt, _SALT_BYTE );
+#endif
     #if defined(_VALGRIND_)
+#if _SALT_BYTE > 0
     VALGRIND_MAKE_MEM_UNDEFINED(salt, _SALT_BYTE );  // mark secret data as undefined data
+#endif
     VALGRIND_MAKE_MEM_UNDEFINED(sk, OV_SECRETKEYBYTES );  // mark secret data as undefined data
     #endif
 
@@ -50,7 +54,9 @@ int ov_sign( uint8_t *signature, const sk_t *sk, const uint8_t *message, size_t 
     // The computation:  H(M||salt)  -->   y  --C-map-->   x   --T-->   w
     hash_init  (&h_m_salt_secret);
     hash_update(&h_m_salt_secret, message, mlen);
+#if _SALT_BYTE > 0
     hash_update(&h_m_salt_secret, salt, _SALT_BYTE);
+#endif
     hash_ctx_copy(&h_vinegar_copy, &h_m_salt_secret);
     hash_final_digest( y, _PUB_M_BYTE, &h_m_salt_secret);    // H(M||salt)
 
@@ -119,7 +125,9 @@ int ov_sign( uint8_t *signature, const sk_t *sk, const uint8_t *message, size_t 
     gf256v_add(w, y, _V_BYTE );
 
     // return: signature <- w || salt.
+#if _SALT_BYTE > 0
     memcpy( signature + _PUB_N_BYTE, salt, _SALT_BYTE );
+#endif
 
     return 0;
 }
@@ -131,7 +139,11 @@ int _ov_verify( const uint8_t *message, size_t mlen, const uint8_t *salt, const 
     hash_ctx hctx;
     hash_init(&hctx);
     hash_update(&hctx, message, mlen);
+#if _SALT_BYTE > 0
     hash_update(&hctx, salt, _SALT_BYTE);
+#else
+    (void)salt;
+#endif
     hash_final_digest(correct, _PUB_M_BYTE, &hctx);  // H( message || salt )
 
     // check consistency.

@@ -60,9 +60,12 @@ The salt length is configurable at build time via `SALT=` (see [Building](#build
 
 | Salt length | PARAM=80 signature | PARAM=100 signature |
 |------------|-------------------|-------------------|
+| 0 bytes | 50 B = **400 bits** | 63 B = **504 bits** |
 | 4 bytes (default) | 54 B = **432 bits** | 67 B = **536 bits** |
 | 8 bytes | 58 B = 464 bits | 71 B = 568 bits |
 | 16 bytes (upstream default) | 66 B = 528 bits | 79 B = 632 bits |
+
+**`SALT=0` note:** With no salt, the hash target is `H(message)` rather than `H(message || salt)`. This means signing the same message twice produces the same signature (fully deterministic signing), and an attacker observing multiple signatures can attempt multi-target collision attacks across all distinct messages. This is acceptable when the number of signed messages is small (a few thousand or less) and the use case does not require non-repudiation of distinct signing events. For the stego channel use case with a passive eavesdropper and low message volume, `SALT=0` is a reasonable choice to minimize bandwidth.
 
 ## Parameter Sets
 
@@ -132,14 +135,14 @@ make clean && make stego_demo PARAM=1
 The salt length defaults to 4 bytes. Override it with the `SALT=` parameter:
 
 ```bash
+# No salt -- minimal signature, deterministic signing (400-bit signature for PARAM=80)
+make clean && make stego_demo PARAM=80 SALT=0
+
 # Use 8-byte salt (464-bit signature for PARAM=80)
 make clean && make stego_demo PARAM=80 SALT=8
 
 # Use 16-byte salt to match upstream UOV (528-bit signature for PARAM=80)
 make clean && make stego_demo PARAM=80 SALT=16
-
-# Use 2-byte salt for extreme bandwidth constraints (416-bit signature for PARAM=80)
-make clean && make stego_demo PARAM=80 SALT=2
 ```
 
 The `SALT=` parameter works with all targets (`stego_demo`, `test`, `sign_api-test`, etc.) and all `PARAM=` values.
@@ -206,6 +209,7 @@ All signature sizes below use the default 4-byte salt. Add `(SALT - 4)` bytes fo
 
 | `SALT=` | Salt length | Notes |
 |---------|-------------|-------|
+| `0` | 0 bytes | No salt, deterministic signing, minimal size |
 | (omitted) | 4 bytes = 32 bits | Default, suitable for low-volume stego channels |
 | `8` | 8 bytes = 64 bits | Good for moderate signature volumes |
 | `16` | 16 bytes = 128 bits | Matches upstream UOV / NIST submission |
