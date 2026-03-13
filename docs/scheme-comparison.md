@@ -9,7 +9,7 @@ This document summarizes the research into compact digital signature schemes sui
 - **Threat model**: Active eavesdropper; adaptive chosen-message attacks are possible
 - **Public key exchange**: Out-of-band (~1 MB acceptable)
 - **Channel noise**: Bit flips and erasures (BER to be measured)
-- **Salt**: 4-byte (32-bit) random salt included in signatures to ensure distinct signatures across images sharing the same perceptual hash, and to protect against adaptive chosen-message attacks
+- **Salt**: 2-byte (16-bit) random salt embedded *inside* the recovered digest (salt-in-digest technique), ensuring distinct signatures across images sharing the same perceptual hash and protecting against adaptive chosen-message attacks, at zero bandwidth cost
 
 ## Comprehensive Scheme Survey
 
@@ -42,20 +42,20 @@ All 14 NIST Additional Digital Signatures Round 2 candidates were evaluated, alo
 
 ## Shortlist for Stego Channel
 
-The table below includes only schemes that could plausibly fit within the channel budget, plus custom reduced-security UOV parameter sets optimized for minimal signature size. Signature sizes include a 4-byte (32-bit) salt where applicable.
+The table below includes only schemes that could plausibly fit within the channel budget, plus custom reduced-security UOV parameter sets optimized for minimal signature size. UOV signature sizes use the **salt-in-digest** technique (see below), where the salt is embedded inside the recovered digest at zero bandwidth cost.
 
 | Scheme | Sig bits | PK classic | PK compressed | Digest recovery? | Classical security (bits) | Quantum security (bits) | Status | Risk |
 |---|---|---|---|---|---|---|---|---|
 | ~~GeMSS-128~~ | ~~264~~ | ~~352 KB~~ | ~~N/A~~ | ~~Partial~~ | ~~72 (broken)~~ | ~~N/A~~ | **BROKEN** | Fatal: Support-Minors MinRank key recovery |
 | **BLS (MNT-159)** | ~160 | ~40 B | ~20 B | No | ~60-70 | 0 (Shor) | Non-standard | Quantum-broken; very low classical security |
 | **BLS12-381** | 384 | 96 B | 48 B | No | ~117-120 | 0 (Shor) | Standardized | Quantum-broken; ~8-11 bits below 128 target |
-| **UOV-80** (custom) | **432** [^1] | 25.5 KB | 4.2 KB | **Yes** (160 bits) | 80 | ~40-48 (est.) | Custom params | Non-standard; 80-bit may be thin for active attacker |
-| **UOV-100** (custom) | **536** [^1] | 50.4 KB | 8.1 KB | **Yes** (200 bits) | 100 | ~50-60 (est.) | Custom params | Non-standard; good security margin |
-| **UOV** (NIST L1) | 800 [^1] | 278 KB | ~43-66 KB | **Yes** (~256 bits) | 128 | ~64-96 (uncertain) | NIST R2 | Low risk; well-studied 25+ year history |
+| **UOV-80** (custom) | **400** | 25.5 KB | 4.2 KB | **Yes** (144 bits hash + 16 bits salt) | 80 | ~40-48 (est.) | Custom params | Non-standard; 80-bit may be thin for active attacker |
+| **UOV-100** (custom) | **504** | 50.4 KB | 8.1 KB | **Yes** (184 bits hash + 16 bits salt) | 100 | ~50-60 (est.) | Custom params | Non-standard; good security margin |
+| **UOV** (NIST L1) | 768 [^1] | 278 KB | ~43-66 KB | **Yes** (~256 bits) | 128 | ~64-96 (uncertain) | NIST R2 | Low risk; well-studied 25+ year history |
 | **SNOVA** (37,17,2) | 992 | 9.8 KB | ~5 KB (est.) | Yes | 153 | ~equivalent | NIST R2 | Medium: l=2 parameter set under cryptanalytic scrutiny |
 | **SQIsign** L1 | 1,184 | 65 B | 65 B | No | 128 | 128 | NIST R2 | Medium: novel isogeny math; complex implementation |
 
-[^1]: Signature sizes include a 4-byte (32-bit) salt appended to the raw signature vector. Without salt: UOV-80 = 400 bits (50 bytes), UOV-100 = 504 bits (63 bytes), UOV NIST L1 = 768 bits (96 bytes). The salt ensures distinct signatures when the same perceptual hash is signed for multiple images and provides protection against adaptive chosen-message attacks. The reference implementation default is 16-byte salt; 4 bytes is sufficient for this application given the non-repeated-key-message pairs.
+[^1]: UOV NIST L1 uses the standard reference implementation with salt appended to the signature (768 + salt bits). With the salt-in-digest modification applied, the signature would be 768 bits (96 bytes for GF(16) variant) or 896 bits (112 bytes for GF(256) variant) with no appended salt.
 
 ### Custom UOV Parameters
 
@@ -65,14 +65,45 @@ The table below includes only schemes that could plausibly fit within the channe
 | Vinegar variables (v) | 30 | 38 |
 | Oil variables (o) | 20 | 25 |
 | Total variables (n = v + o) | 50 | 63 |
-| Raw signature (n bytes) | 400 bits | 504 bits |
-| Salt | 32 bits (4 bytes) | 32 bits (4 bytes) |
-| **Total signature** | **432 bits** | **536 bits** |
-| Recovered digest (o bytes) | 160 bits | 200 bits |
-| Collision resistance of recovered digest | 2^80 | 2^100 |
+| **Signature (= w only)** | **50 bytes = 400 bits** | **63 bytes = 504 bits** |
+| Recovered digest P(w) | 20 bytes = 160 bits | 25 bytes = 200 bits |
+| Salt (inside digest) | 2 bytes = 16 bits (default) | 2 bytes = 16 bits (default) |
+| Effective hash (digest - salt) | 18 bytes = 144 bits | 23 bytes = 184 bits |
+| Collision resistance | 2^72 (with 2B salt) / 2^80 (no salt) | 2^92 (with 2B salt) / 2^100 (no salt) |
 | Preprocessor define | `_OV256_50_20` | `_OV256_63_25` |
 
-These parameters were selected using `uov_security_estimator.py` to minimize signature size while achieving the target security level against all known attacks (direct algebraic, Kipnis-Shamir, intersection/reconciliation, and collision forgery). The collision forgery bound (birthday attack on `q^(o/2) = 256^(o/2) = 2^(4o)`) is the bottleneck in both cases.
+These parameters were selected using `uov_security_estimator.py` to minimize signature size while achieving the target security level against all known attacks (direct algebraic, Kipnis-Shamir, intersection/reconciliation, and collision forgery). Without salt, the collision forgery bound (birthday attack on `q^(o/2) = 256^(o/2) = 2^(4o)`) is the bottleneck. With the default 2-byte salt, the effective hash is reduced by 2 bytes, lowering collision resistance by 8 bits.
+
+### Salt-in-Digest Technique
+
+The standard UOV signature format appends the salt to the signature vector: `signature = w || salt`. This costs `_SALT_BYTE` bytes of channel bandwidth per signature.
+
+Our implementation uses **salt-in-digest**: the salt is embedded inside the recovered digest `P(w)` rather than appended to the signature. The digest layout becomes:
+
+```
+P(w) = H(message)[0 .. effective-1] || salt[0 .. _SALT_BYTE-1]
+       \_________________________/     \____________________/
+        truncated hash of message       random nonce (embedded)
+        (verified by receiver)          (recovered, not transmitted)
+```
+
+**How it works:**
+
+1. **Signing**: Compute `H(message)` truncated to `o - _SALT_BYTE` bytes, append `_SALT_BYTE` bytes of random salt, forming the target `y`. Find `w` such that `P(w) = y`. The signature is just `w`.
+2. **Verification**: Evaluate `P(w)` to recover the full digest. Compare the first `o - _SALT_BYTE` bytes against `H(message)` truncated to the same length. The last `_SALT_BYTE` bytes are the salt (recovered but not checked).
+
+**Benefits:**
+- Signature size is always `n` bytes regardless of salt configuration
+- Salt provides multi-target attack resistance and signature uniqueness at **zero bandwidth cost**
+- Trade-off: each byte of salt reduces effective hash (and collision resistance) by 8 bits
+
+**Signature sizes at different salt configurations** (signature size is always the same):
+
+| Salt | UOV-80 sig | UOV-80 collision bits | UOV-100 sig | UOV-100 collision bits |
+|------|-----------|----------------------|------------|---------------------|
+| 0 B | 400 bits | 80 | 504 bits | 100 |
+| 2 B (default) | 400 bits | 72 | 504 bits | 92 |
+| 4 B | 400 bits | 64 | 504 bits | 84 |
 
 ## Key Findings
 
@@ -103,11 +134,11 @@ Both BLS variants are completely broken by Shor's algorithm on a quantum compute
 
 UOV signatures have a message recovery property that most descriptions overlook:
 
-- **Signing**: Compute `h = H(message || salt)`, find signature vector `s` such that `P(s) = h`
-- **Verification**: Evaluate `P(s)` on the signature to **recover** `h`, then check `h == H(message || salt)`
-- **Key insight**: The verifier does not need `h` to be transmitted -- it is recovered from the signature
+- **Signing**: Find signature vector `w` such that `P(w) = target_digest`
+- **Verification**: Evaluate `P(w)` on the signature to **recover** the target digest, then verify it
+- **Key insight**: The verifier does not need the digest to be transmitted -- it is recovered from the signature
 
-This means only the signature (+ salt) travels through the stego channel. The recovered digest size equals `o * 8` bits (for GF(256)), providing collision resistance of `2^(4o)` bits.
+This means only the signature vector `w` travels through the stego channel. The recovered digest size equals `o * 8` bits (for GF(256)). Combined with the salt-in-digest technique (see above), the salt is also recovered for free, so the signature is just `w` with nothing appended.
 
 Other multivariate schemes (SNOVA, MAYO, QR-UOV) also support message recovery via the same mechanism: the verifier evaluates the public map on the signature. Fiat-Shamir-based schemes (SQIsign, Hawk, FAEST, etc.) and pairing-based schemes (BLS) do **not** support message recovery.
 
@@ -117,21 +148,22 @@ Digital signatures cannot be truncated without destroying them. The signature is
 
 ### Salt considerations
 
-The UOV reference implementation uses a 16-byte (128-bit) salt by default. For this application, a 4-byte (32-bit) salt is sufficient because:
+The upstream UOV reference implementation appends a 16-byte (128-bit) salt to the signature, costing 128 bits of channel bandwidth. Our implementation uses two optimizations:
 
-- The salt's primary purpose is to ensure distinct signatures when the same perceptual hash is signed for multiple images, and to provide security under adaptive chosen-message attacks
-- 4 bytes provides 2^32 distinct salt values, adequate for the expected number of signatures per key
-- Reducing from 16 to 4 bytes saves 96 bits of channel bandwidth
-- The `_SALT_BYTE` constant in `params.h` can be adjusted accordingly
+1. **Reduced salt size**: 2 bytes (16 bits) is sufficient for this application. The salt ensures distinct signatures when the same perceptual hash is signed for multiple images and provides protection under adaptive chosen-message attacks (EUF-CMA). 2 bytes provides 2^16 distinct salt values per message.
+
+2. **Salt-in-digest**: The salt is embedded inside the recovered digest `P(w)` rather than appended to the signature. This eliminates the bandwidth cost entirely -- the signature is just `w` (n bytes) regardless of salt size. The trade-off is reduced collision resistance: each byte of salt reduces the effective hash by 8 bits.
+
+The combined effect: UOV-80 achieves **400-bit signatures** (vs. 528 bits with the naive 4-byte appended salt, or 528 bits with the upstream 16-byte salt), while still providing salt-based protection against adaptive attacks.
 
 ## Stego Channel Architecture
 
 ```
 Sender:
-  perceptual_hash -----> UOV sign (sk, hash, salt)
+  perceptual_hash -----> UOV sign (sk, hash)
                               |
                               v
-                         [signature || salt]   (432 or 536 bits)
+                         [w only]              (400 or 504 bits, salt is inside P(w))
                               |
                               v
                          [outer RS-ECC]        (adds redundancy for bit flips/erasures)
@@ -152,30 +184,29 @@ Receiver:
                     [RS-ECC decode]
                          |
                          v
-                    [signature || salt]
+                    [w]
                          |
                          v
-                    P(s) = recovered hash       (digest recovered from signature)
-                    verify: P(s) == H(msg||salt)
+                    P(w) = H(msg)[trunc] || salt   (hash + salt recovered from signature)
+                    verify: H(msg)[trunc] == first bytes of P(w)
 ```
 
 ## Recommendations
 
-1. **UOV-100 at 536 bits** is the recommended primary option: 100-bit security provides adequate margin against active attackers, the signature fits within the ~500-bit budget (tight but feasible with efficient outer ECC), and message recovery eliminates the need to transmit the digest separately.
+1. **UOV-100 at 504 bits** is the recommended primary option: 100-bit security provides adequate margin against active attackers, the signature fits within the ~500-bit budget (tight but feasible with efficient outer ECC), message recovery eliminates the need to transmit the digest separately, and the salt-in-digest technique provides adaptive chosen-message security at zero bandwidth cost. Collision resistance is 92 bits (with default 2-byte salt).
 
-2. **UOV-80 at 432 bits** is the fallback if ECC overhead is too high for UOV-100: leaves ~68 bits for outer ECC within a 500-bit budget. However, 80-bit security is marginal against well-resourced active attackers.
+2. **UOV-80 at 400 bits** is the fallback if ECC overhead is too high for UOV-100: leaves ~100 bits for outer ECC within a 500-bit budget. However, 80-bit security is marginal against well-resourced active attackers. Collision resistance is 72 bits (with default 2-byte salt).
 
-3. **BLS12-381 at 384 bits** is viable if post-quantum security is not required and the digest can be transmitted separately or is already known to the receiver. Compact, standardized, well-understood.
+3. **BLS12-381 at 384 bits** is viable if post-quantum security is not required and the digest can be transmitted separately or is already known to the receiver. Compact, standardized, well-understood. No message recovery.
 
-4. **UOV NIST L1 at 800 bits** is the conservative choice if the channel can accommodate ~1000 bits: standardized parameters, 128-bit security, 25+ year cryptanalytic history.
+4. **UOV NIST L1 at 768 bits** (with salt-in-digest) is the conservative choice if the channel can accommodate ~1000 bits: standardized parameters, 128-bit security, 25+ year cryptanalytic history.
 
 ### Next steps
 
 1. **Measure the stego channel BER/erasure rate** to determine outer ECC requirements
-2. **Reduce `_SALT_BYTE` to 4** in the implementation
-3. **Design outer Reed-Solomon ECC** layer sized for measured channel conditions
-4. **Implement interleaver** for burst error protection
-5. **Prototype the full pipeline**: sign -> ECC encode -> interleave -> stego embed -> extract -> deinterleave -> ECC decode -> verify
+2. **Design outer Reed-Solomon ECC** layer sized for measured channel conditions
+3. **Implement interleaver** for burst error protection
+4. **Prototype the full pipeline**: sign -> ECC encode -> interleave -> stego embed -> extract -> deinterleave -> ECC decode -> verify
 
 ## References
 
