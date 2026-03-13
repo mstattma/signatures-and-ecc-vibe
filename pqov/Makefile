@@ -172,6 +172,11 @@ VARIANT=1
 endif
 
 
+ifdef SALT
+CFLAGS   += -D_SALT_BYTE=$(SALT)
+CXXFLAGS += -D_SALT_BYTE=$(SALT)
+endif
+
 
 OBJ = $(SRCS_O_NOTDIR)
 

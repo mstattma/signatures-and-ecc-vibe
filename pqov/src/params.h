@@ -106,8 +106,10 @@
 /// length of seed for secret key, in # bytes
 #define LEN_SKSEED 32
 
-/// length of salt for a signature, in # bytes
-#define _SALT_BYTE 16
+/// length of salt for a signature, in # bytes (configurable via -D_SALT_BYTE=N)
+#ifndef _SALT_BYTE
+#define _SALT_BYTE 4
+#endif
 
 /// length of a signature
 #define OV_SIGNATUREBYTES (_PUB_N_BYTE + _SALT_BYTE )
