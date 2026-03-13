@@ -205,6 +205,62 @@ int main(void) {
 #endif
 
     // ============================================================
+    // Step 6: Signing with externally-provided digest (skip SHAKE256)
+    // ============================================================
+    printf("--- Step 6: Signing with external digest ---\n");
+
+    // Simulate an externally-computed digest (e.g., SHA-256 from another system)
+    const uint8_t external_digest[] = {
+        0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe,
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x99
+    };
+    size_t ext_digest_len = 32;  // e.g., SHA-256 output
+    print_hex("External digest", external_digest, ext_digest_len);
+
+    uint8_t sig_ext[OV_SIGNATUREBYTES];
+    rc = ov_sign_digest(sig_ext, (const sk_t *)sk,
+                        external_digest, ext_digest_len,
+                        NULL, 0);  // random salt
+    if (rc != 0) {
+        fprintf(stderr, "signing with external digest failed: %d\n", rc);
+        return 1;
+    }
+    print_hex("Signature w", sig_ext, OV_SIGNATUREBYTES);
+
+    // Verify using ov_verify_digest
+    rc = ov_verify_digest(external_digest, ext_digest_len,
+                          sig_ext, (const pk_t *)pk);
+    printf("  Verification (ov_verify_digest): %s\n", rc == 0 ? "VALID" : "INVALID");
+
+    // Show what was recovered
+    uint8_t recovered_ext[_PUB_M_BYTE];
+    ov_publicmap(recovered_ext, ((const pk_t *)pk)->pk, sig_ext);
+    print_hex("Recovered P(w)", recovered_ext, _PUB_M_BYTE);
+#if _SALT_BYTE > 0
+    print_hex("  Hash portion (from external digest)", recovered_ext, _HASH_EFFECTIVE_BYTE);
+    printf("  Expected first %d bytes of external digest: ", _HASH_EFFECTIVE_BYTE);
+    for (int i = 0; i < _HASH_EFFECTIVE_BYTE && i < (int)ext_digest_len; i++) printf("%02x", external_digest[i]);
+    printf("\n");
+    int ext_match = (memcmp(recovered_ext, external_digest, _HASH_EFFECTIVE_BYTE) == 0);
+#else
+    int ext_match = (memcmp(recovered_ext, external_digest, _PUB_M_BYTE) == 0);
+#endif
+    printf("  Hash portion matches external digest: %s\n",
+           ext_match ? "YES" : "NO (digest was hashed/truncated)");
+
+    // Also test with user-provided salt + digest
+    uint8_t sig_ext2[OV_SIGNATUREBYTES];
+    rc = ov_sign_digest(sig_ext2, (const sk_t *)sk,
+                        external_digest, ext_digest_len,
+                        (const uint8_t *)"fixed-salt", 10);
+    rc = ov_verify_digest(external_digest, ext_digest_len,
+                          sig_ext2, (const pk_t *)pk);
+    printf("  Verify with user salt + external digest: %s\n", rc == 0 ? "VALID" : "INVALID");
+    printf("\n");
+
+    // ============================================================
     // Summary
     // ============================================================
     printf("=================================================================\n");

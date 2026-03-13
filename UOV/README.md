@@ -63,6 +63,33 @@ ov_sign_salt(signature, sk, message, mlen, my_salt, my_salt_len);
 
 If `user_salt` is NULL or `user_salt_len` is 0, a random salt is generated.
 
+### Externally-provided digest
+
+The `ov_sign_digest()` and `ov_verify_digest()` functions allow the caller to provide a pre-computed digest directly, skipping the internal SHAKE256 computation. This is useful when:
+
+- The digest was computed by an external system (e.g., SHA-256 from a hardware module)
+- The caller wants full control over the hash function
+- The message is too large to pass directly
+
+```c
+// Sign with an external digest (e.g., SHA-256 output) and random salt:
+uint8_t sha256_hash[32];
+// ... compute sha256_hash externally ...
+ov_sign_digest(signature, sk, sha256_hash, 32, NULL, 0);
+
+// Sign with external digest + user-provided salt:
+ov_sign_digest(signature, sk, sha256_hash, 32, my_salt, my_salt_len);
+
+// Verify against the same external digest:
+int rc = ov_verify_digest(sha256_hash, 32, signature, pk);
+```
+
+The digest is handled as follows:
+- If `digest_len >= _HASH_EFFECTIVE_BYTE`: the first `_HASH_EFFECTIVE_BYTE` bytes are used directly (truncated)
+- If `digest_len < _HASH_EFFECTIVE_BYTE`: the digest is hashed with SHAKE256 to expand it to the required length
+
+Both signer and verifier must use the same digest bytes. The salt (if any) is embedded in the remaining bytes of the recovered `P(w)` as usual.
+
 ### Digest layout for each parameter set
 
 With the default 2-byte salt:
@@ -333,8 +360,8 @@ Receiver:
 | File | Changes |
 |------|---------|
 | `pqov/src/params.h` | Added `_OV256_50_20` (80-bit) and `_OV256_63_25` (100-bit) parameter definitions; salt-in-digest architecture (`OV_SIGNATUREBYTES = _PUB_N_BYTE`, `_HASH_EFFECTIVE_BYTE`); configurable `_SALT_BYTE` default 2 |
-| `pqov/src/ov.c` | Rewrote `ov_sign` / `_ov_verify` for salt-in-digest: target is `H(msg)[trunc] \|\| salt`, verification checks only hash portion; added `ov_sign_salt()` for user-provided salt |
-| `pqov/src/ov.h` | Added `ov_sign_salt()` declaration |
+| `pqov/src/ov.c` | Rewrote signing/verify for salt-in-digest; refactored into `_ov_sign_target()` core; added `ov_sign_salt()`, `ov_sign_digest()`, `ov_verify_digest()` |
+| `pqov/src/ov.h` | Added `ov_sign_salt()`, `ov_sign_digest()`, `ov_verify_digest()` declarations |
 | `pqov/Makefile` | Added `PARAM=80`, `PARAM=100`, `SALT=` build variables; added `stego_demo` target |
 
 ### Files added

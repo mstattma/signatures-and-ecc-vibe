@@ -171,8 +171,39 @@ int ov_sign_salt( uint8_t *signature, const sk_t *sk, const uint8_t *message, si
 /// @param[in]  pk        - the public key.
 /// @return 0 for successful verified. -1 for failed verification.
 ///
+///
+/// @brief Signing function with externally-provided digest (skips internal SHAKE256).
+///
+/// @param[out] signature      - the signature (w only, _PUB_N_BYTE bytes).
+/// @param[in]  sk             - the secret key.
+/// @param[in]  digest         - the pre-computed digest bytes.
+///                              If digest_len >= _HASH_EFFECTIVE_BYTE, truncated.
+///                              If shorter, hashed to expand.
+/// @param[in]  digest_len     - length of digest.
+/// @param[in]  user_salt      - optional user-provided salt (any length), or NULL for random.
+/// @param[in]  user_salt_len  - length of user_salt.
+/// @return 0 for success. -1 otherwise.
+///
+#define ov_sign_digest PQOV_NAMESPACE(ov_sign_digest)
+int ov_sign_digest( uint8_t *signature, const sk_t *sk,
+                    const uint8_t *digest, size_t digest_len,
+                    const uint8_t *user_salt, size_t user_salt_len );
+
 #define ov_verify PQOV_NAMESPACE(ov_verify)
 int ov_verify( const uint8_t *message, size_t mlen, const uint8_t *signature, const pk_t *pk );
+
+///
+/// @brief Verify signature against an externally-provided digest (skips internal SHAKE256).
+///
+/// @param[in]  digest     - the expected digest bytes (same format as ov_sign_digest).
+/// @param[in]  digest_len - length of digest.
+/// @param[in]  signature  - the signature.
+/// @param[in]  pk         - the public key.
+/// @return 0 for successful verified. -1 for failed verification.
+///
+#define ov_verify_digest PQOV_NAMESPACE(ov_verify_digest)
+int ov_verify_digest( const uint8_t *digest, size_t digest_len,
+                      const uint8_t *signature, const pk_t *pk );
 
 
 
