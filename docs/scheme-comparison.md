@@ -44,16 +44,18 @@ All 14 NIST Additional Digital Signatures Round 2 candidates were evaluated, alo
 
 The table below includes only schemes that could plausibly fit within the channel budget, plus custom reduced-security UOV parameter sets optimized for minimal signature size. UOV signature sizes use the **salt-in-digest** technique (see below), where the salt is embedded inside the recovered digest at zero bandwidth cost.
 
-| Scheme | Sig bits | PK classic | PK compressed | Digest recovery? | Classical security (bits) | Quantum security (bits) | Status | Risk |
+| Scheme | Sig bits | PK compressed | Sig + PK (bits) | Digest recovery? | Classical security (bits) | Quantum security (bits) | Status | Risk |
 |---|---|---|---|---|---|---|---|---|
-| ~~GeMSS-128~~ | ~~264~~ | ~~352 KB~~ | ~~N/A~~ | ~~Partial~~ | ~~72 (broken)~~ | ~~N/A~~ | **BROKEN** | Fatal: Support-Minors MinRank key recovery |
-| **BLS (MNT-159)** | ~160 | ~40 B | ~20 B | No | ~60-70 | 0 (Shor) | Non-standard | Quantum-broken; very low classical security |
-| **BLS12-381** | 384 | 96 B | 48 B | No | ~117-120 | 0 (Shor) | Standardized | Quantum-broken; ~8-11 bits below 128 target |
-| **UOV-80** (custom) | **400** | 25.5 KB | 4.2 KB | **Yes** (144 bits hash + 16 bits salt) | 80 | ~40-48 (est.) | Custom params | Non-standard; 80-bit may be thin for active attacker |
-| **UOV-100** (custom) | **504** | 50.4 KB | 8.1 KB | **Yes** (184 bits hash + 16 bits salt) | 100 | ~50-60 (est.) | Custom params | Non-standard; good security margin |
-| **UOV** (NIST L1) | 768 [^1] | 278 KB | ~43-66 KB | **Yes** (~256 bits) | 128 | ~64-96 (uncertain) | NIST R2 | Low risk; well-studied 25+ year history |
-| **SNOVA** (37,17,2) | 992 | 9.8 KB | ~5 KB (est.) | Yes | 153 | ~equivalent | NIST R2 | Medium: l=2 parameter set under cryptanalytic scrutiny |
-| **SQIsign** L1 | 1,184 | 65 B | 65 B | No | 128 | 128 | NIST R2 | Medium: novel isogeny math; complex implementation |
+| ~~GeMSS-128~~ | ~~264~~ | ~~N/A~~ | ~~N/A~~ | ~~Partial~~ | ~~72 (broken)~~ | ~~N/A~~ | **BROKEN** | Fatal: Support-Minors MinRank key recovery |
+| **BLS (MNT-159)** | ~160 | ~20 B | **~320** | No | ~60-70 | 0 (Shor) | Non-standard | Quantum-broken; very low classical security |
+| **BLS12-381** | 384 | 48 B | **768** | No | ~117-120 | 0 (Shor) | Standardized | Quantum-broken; ~8-11 bits below 128 target |
+| **UOV-80** (custom) | **400** | 4.2 KB | **34,128** | **Yes** (144 bits hash + 16 bits salt) | 80 | ~40-48 (est.) | Custom params | Non-standard; 80-bit may be thin for active attacker |
+| **UOV-100** (custom) | **504** | 8.1 KB | **65,312** | **Yes** (184 bits hash + 16 bits salt) | 100 | ~50-60 (est.) | Custom params | Non-standard; good security margin |
+| **UOV** (NIST L1) | 768 [^1] | ~43-66 KB | **~345K-529K** | **Yes** (~256 bits) | 128 | ~64-96 (uncertain) | NIST R2 | Low risk; well-studied 25+ year history |
+| **SNOVA** (37,17,2) | 992 | ~5 KB (est.) | **~41,000** | Yes | 153 | ~equivalent | NIST R2 | Medium: l=2 parameter set under cryptanalytic scrutiny |
+| **SQIsign** L1 | 1,184 | 65 B | **1,704** | No | 128 | 128 | NIST R2 | Medium: novel isogeny math; complex implementation |
+
+The "Sig + PK" column shows the total bits if the public key (compressed where available) is transmitted alongside the signature rather than exchanged out-of-band. BLS and SQIsign have dramatically smaller totals due to their tiny public keys. For UOV, out-of-band PK exchange is essential.
 
 [^1]: UOV NIST L1 uses the standard reference implementation with salt appended to the signature (768 + salt bits). With the salt-in-digest modification applied, the signature would be 768 bits (96 bytes for GF(16) variant) or 896 bits (112 bytes for GF(256) variant) with no appended salt.
 
