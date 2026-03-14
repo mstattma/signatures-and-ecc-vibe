@@ -126,6 +126,14 @@ pragma solidity ^0.8.19;
 import { SchemaResolver } from "@eas/contracts/resolver/SchemaResolver.sol";
 import { IEAS, Attestation } from "@eas/contracts/IEAS.sol";
 
+interface IReputationRegistry {
+    function onImageRegistered(address user) external;
+}
+
+interface IKeyRegistry {
+    function isKeyValidAt(bytes calldata publicKey, uint64 timestamp) external view returns (bool);
+}
+
 contract ImageAuthResolver is SchemaResolver {
     // keccak256(pHash || salt) => attestation UID (0 if none)
     mapping(bytes32 => bytes32) public pHashSaltIndex;
@@ -133,7 +141,13 @@ contract ImageAuthResolver is SchemaResolver {
     // sigPrefix => attestation UID (for lookup)
     mapping(bytes16 => bytes32) public sigPrefixIndex;
 
-    constructor(IEAS eas) SchemaResolver(eas) {}
+    IReputationRegistry public reputationRegistry;
+    IKeyRegistry public keyRegistry;
+
+    constructor(IEAS eas, IReputationRegistry _rep, IKeyRegistry _keys) SchemaResolver(eas) {
+        reputationRegistry = _rep;
+        keyRegistry = _keys;
+    }
 
     function onAttest(
         Attestation calldata attestation,
@@ -159,10 +173,23 @@ contract ImageAuthResolver is SchemaResolver {
         if (pHashSaltIndex[pHashSaltKey] != bytes32(0)) {
             return false; // Reject: duplicate (pHash, salt)
         }
+
+        // Verify the signing key is currently valid for this attester
+        if (address(keyRegistry) != address(0)) {
+            if (!keyRegistry.isKeyValidAt(abi.encodePacked(publicKey), uint64(block.timestamp))) {
+                return false; // Reject: signing key not active
+            }
+        }
+
         pHashSaltIndex[pHashSaltKey] = attestation.uid;
 
         // Index by signature prefix for lookup
         sigPrefixIndex[sigPrefix] = attestation.uid;
+
+        // Notify reputation registry
+        if (address(reputationRegistry) != address(0)) {
+            reputationRegistry.onImageRegistered(attestation.attester);
+        }
 
         return true;
     }
@@ -176,7 +203,7 @@ contract ImageAuthResolver is SchemaResolver {
 }
 ```
 
-**Gas cost of the resolver**: Adds ~40,000 gas for the two SSTORE operations (index writes). First write to a zero slot costs 20,000 gas each. This is a one-time cost per registration, and the indexes enable O(1) on-chain lookups.
+**Gas cost of the resolver**: Adds ~65,000-85,000 gas: two SSTORE operations for indexes (20,000 each), one SLOAD + external call for key validity check (~5,000), one external call to reputation registry (~25,000 including the SSTORE for imageCount). This is a one-time cost per registration, and the indexes enable O(1) on-chain lookups.
 
 ### Signature-Based Lookup
 
@@ -218,28 +245,138 @@ Cost: Free (off-chain query). The EAS indexer on Base/Optimism indexes all attes
 
 **Recommendation**: Use the off-chain GraphQL path for normal lookups (free, fast). Use the on-chain resolver index as a fallback and for smart contract integrations.
 
-### Key Rotation
+### Key Rotation and Validity Tracking
 
-The stego signing keys (UOV/BLS) are ephemeral and rotated frequently. The blockchain address (ECDSA on secp256k1) serves as the persistent identity.
+The stego signing keys (UOV/BLS) are ephemeral and rotated frequently to limit exposure from their relatively low security (80-120 bits). The blockchain address (ECDSA on secp256k1) serves as the persistent identity. A **Key Registry** smart contract tracks the lifecycle of each signing key, establishing validity windows that prevent old keys from being used for new content.
 
 #### Trust chain
 
 ```
-Ethereum address (persistent identity)
-  └── Signs EAS attestation (tx signature = blockchain key)
-        └── Contains stego public key (ephemeral)
-              └── Stego signature in image (verified against PK from attestation)
+Ethereum address (persistent identity, 128+ bit security)
+  └── Key Registry (on-chain, tracks PK lifecycle)
+        └── Signing key #1 (valid from T1 to T2)
+        │     └── Image attestations signed during [T1, T2]
+        └── Signing key #2 (valid from T2 to T3)
+        │     └── Image attestations signed during [T2, T3]
+        └── Signing key #N (valid from TN, active)
+              └── Current image attestations
 ```
 
-No additional key registry contract is needed. The EAS attestation's `attester` field is the Ethereum address that signed the transaction, which is the persistent identity. Each attestation contains the stego PK used for that signing session. The EAS indexer allows querying all attestations by a given attester, providing a history of all stego keys used by that identity.
+#### Key Registry Contract
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.19;
+
+contract KeyRegistry {
+    struct SigningKey {
+        bytes publicKey;        // Compressed stego PK
+        uint8 scheme;           // 0=UOV-80, 1=UOV-100, 2=BLS-BN158, 3=BLS12-381
+        uint64 activatedAt;     // Block timestamp when key was registered
+        uint64 revokedAt;       // Block timestamp when key was rotated/revoked (0 = active)
+        bytes32 pkHash;         // keccak256(publicKey) for efficient lookup
+    }
+
+    // user address => list of signing keys (append-only)
+    mapping(address => SigningKey[]) public signingKeys;
+
+    // keccak256(publicKey) => (user address, key index) for PK lookup
+    mapping(bytes32 => address) public pkOwner;
+    mapping(bytes32 => uint256) public pkIndex;
+
+    // user address => index of currently active key (or type(uint256).max if none)
+    mapping(address => uint256) public activeKeyIndex;
+
+    event KeyActivated(address indexed user, uint256 indexed keyIndex, bytes publicKey, uint8 scheme);
+    event KeyRevoked(address indexed user, uint256 indexed keyIndex, uint64 revokedAt);
+
+    /// @notice Register a new signing key. Automatically revokes the previous active key.
+    function registerKey(bytes calldata publicKey, uint8 scheme) external {
+        bytes32 pkh = keccak256(publicKey);
+        require(pkOwner[pkh] == address(0), "PK already registered");
+
+        // Revoke previous active key
+        uint256 prevIdx = activeKeyIndex[msg.sender];
+        if (signingKeys[msg.sender].length > 0 && signingKeys[msg.sender][prevIdx].revokedAt == 0) {
+            signingKeys[msg.sender][prevIdx].revokedAt = uint64(block.timestamp);
+            emit KeyRevoked(msg.sender, prevIdx, uint64(block.timestamp));
+        }
+
+        // Register new key
+        uint256 newIdx = signingKeys[msg.sender].length;
+        signingKeys[msg.sender].push(SigningKey({
+            publicKey: publicKey,
+            scheme: scheme,
+            activatedAt: uint64(block.timestamp),
+            revokedAt: 0,
+            pkHash: pkh
+        }));
+
+        pkOwner[pkh] = msg.sender;
+        pkIndex[pkh] = newIdx;
+        activeKeyIndex[msg.sender] = newIdx;
+
+        emit KeyActivated(msg.sender, newIdx, publicKey, scheme);
+    }
+
+    /// @notice Explicitly revoke a key (e.g., suspected compromise).
+    function revokeKey(uint256 keyIndex) external {
+        require(keyIndex < signingKeys[msg.sender].length, "Invalid index");
+        require(signingKeys[msg.sender][keyIndex].revokedAt == 0, "Already revoked");
+        signingKeys[msg.sender][keyIndex].revokedAt = uint64(block.timestamp);
+        emit KeyRevoked(msg.sender, keyIndex, uint64(block.timestamp));
+    }
+
+    /// @notice Check if a PK was valid at a given timestamp.
+    function isKeyValidAt(bytes calldata publicKey, uint64 timestamp) external view returns (bool) {
+        bytes32 pkh = keccak256(publicKey);
+        address owner = pkOwner[pkh];
+        if (owner == address(0)) return false;
+        SigningKey storage k = signingKeys[owner][pkIndex[pkh]];
+        return timestamp >= k.activatedAt && (k.revokedAt == 0 || timestamp < k.revokedAt);
+    }
+
+    /// @notice Get the number of keys registered by a user.
+    function keyCount(address user) external view returns (uint256) {
+        return signingKeys[user].length;
+    }
+}
+```
+
+**Gas costs:**
+
+| Operation | Gas | Cost on L2 | Frequency |
+|---|---|---|---|
+| `registerKey()` (first key) | ~120,000 | ~$0.12 | Once per key rotation |
+| `registerKey()` (rotation, revokes previous) | ~140,000 | ~$0.14 | Once per key rotation |
+| `revokeKey()` (emergency) | ~30,000 | ~$0.03 | Rare |
+| `isKeyValidAt()` (verification) | ~5,000 | Free (view) | Per verification |
 
 #### Key rotation workflow
 
 1. Generate new stego key pair `(pk_new, sk_new)`
-2. Sign images with `sk_new`, embed signatures
-3. Register each image on EAS with `pk_new` in the attestation
-4. When rotating: discard `sk_new`, generate `(pk_newer, sk_newer)`
-5. No on-chain key rotation transaction needed -- the new PK simply appears in new attestations
+2. Call `keyRegistry.registerKey(pk_new, scheme)` — this atomically revokes the previous key and activates the new one with `activatedAt = block.timestamp`
+3. Sign images with `sk_new`, embed signatures, register attestations
+4. When rotating: discard `sk_new`, repeat from step 1
+
+#### Verification with key validity
+
+When verifying an image attestation, the verifier MUST check that the signing key was valid at the time the attestation was created:
+
+```javascript
+const attestation = await eas.getAttestation(uid);
+const { publicKey } = decode(attestation.data);
+const attestTime = attestation.time;
+
+// Check key was valid when attestation was created
+const valid = await keyRegistry.isKeyValidAt(publicKey, attestTime);
+if (!valid) {
+  // Key was not active at attestation time — possible backdated forgery
+  reject();
+}
+```
+
+This prevents an attacker who compromises an old (revoked) key from creating new attestations that appear legitimate.
 
 ### Relevant ERCs and Standards
 
@@ -257,14 +394,22 @@ No additional key registry contract is needed. The EAS attestation's `attester` 
 
 | Operation | Gas (L2) | Cost on Base (~$0.001/1000 gas) | Notes |
 |---|---|---|---|
-| Schema registration | ~250,000 | ~$0.25 | One-time, per schema |
-| Resolver deployment | ~500,000 | ~$0.50 | One-time |
-| Image attestation (no resolver) | ~60,000-80,000 | ~$0.06-0.08 | Per image |
-| Image attestation (with resolver) | ~100,000-140,000 | ~$0.10-0.14 | Per image, includes index writes |
-| Lookup by sigPrefix (on-chain) | ~2,100 | Free (view) | Per lookup |
+| Schema registration | ~250,000 | ~$0.25 | One-time, per schema (need 4 schemas) |
+| Resolver deployment | ~800,000 | ~$0.80 | One-time |
+| KeyRegistry deployment | ~600,000 | ~$0.60 | One-time |
+| ReputationRegistry deployment | ~1,200,000 | ~$1.20 | One-time |
+| Key registration/rotation | ~120,000-140,000 | ~$0.12-0.14 | Per key rotation |
+| Image attestation (with resolver) | ~130,000-170,000 | ~$0.13-0.17 | Per image, includes indexes + key check + reputation |
+| Rate a user | ~50,000 | ~$0.05 | One-time per (rater, user) pair |
+| Rate an image | ~60,000 | ~$0.06 | One-time per (rater, image) pair |
+| Submit user metadata | ~25,000 | ~$0.025 | Per metadata item |
+| Lookup by sigPrefix (on-chain) | ~2,100 | Free (view) | Per verification |
+| Get reputation score | ~10,000 | Free (view) | Per query |
 | Revoke attestation | ~30,000 | ~$0.03 | For key compromise |
 
-**Estimated cost per image registration: $0.10-0.14 on Base/Optimism.** This includes the resolver's duplicate detection indexes.
+**Estimated cost per image registration: $0.13-0.17 on Base/Optimism.** This includes the resolver's duplicate detection, key validity check, signature-prefix indexing, and reputation registry notification.
+
+**One-time deployment cost: ~$3.85** for all contracts and schemas.
 
 ### Batch Optimization
 
@@ -559,50 +704,322 @@ If the image already has an embedded signature (detected during stego analysis),
    e. (optional) check attester's reputation
 ```
 
-## Reputation System (Future Work)
+## Reputation System
 
-The attester's Ethereum address accumulates a history of attestations. A reputation score could be derived from:
+The platform tracks reputation at two levels: **user reputation** (the Ethereum address / identity) and **image reputation** (individual attestations). Reputation scoring is implemented via a combination of a smart contract (for on-chain scoring rules and community ratings) and off-chain computation (for complex aggregation).
 
-- Number of registered images
-- Age of the oldest attestation (account longevity)
-- Number of verified-correct images (community attestations)
-- Absence of revocations (no key compromise history)
-- Third-party endorsements (other EAS attestations referencing this attester)
+### Reputation Sources
 
-EAS's composability enables this: a "reputation attestation" schema can reference the image authentication schema, building a web of trust.
+#### Automated rules (computed on-chain or by indexer)
+
+| Factor | Weight | Source | Notes |
+|---|---|---|---|
+| Account age | Low-Medium | `keyRegistry.signingKeys[user][0].activatedAt` | Older accounts are more trustworthy |
+| Number of registered images | Low | Count of EAS attestations by attester | Activity level |
+| Key rotation hygiene | Medium | Number of key rotations vs. account age | Regular rotation suggests security awareness |
+| Absence of revocations | Medium | No emergency `revokeKey()` calls | Key compromises reduce trust |
+| Attestation consistency | Medium | pHash similarity between claimed and verified images | Automated verification sampling |
+
+#### User-provided metadata (on-chain via EAS)
+
+Users can submit additional attestations about themselves to improve their reputation. These follow a separate EAS schema:
+
+```
+bytes32 metadataType,     // keccak256("email"), keccak256("website"), keccak256("organization"), etc.
+bytes value,              // The metadata value (encrypted or hashed for privacy)
+bytes32 proofCID          // IPFS CID of verification proof (e.g., DKIM proof for email)
+```
+
+| Metadata type | Verification method | Trust boost | Notes |
+|---|---|---|---|
+| **Email address** | DKIM signature proof or verification oracle | Medium | Proves control of email domain |
+| **Website/domain** | DNS TXT record or `.well-known` file | Medium | Proves domain ownership |
+| **Organization** | EAS attestation from a known org address | High | Third-party endorsement |
+| **Social media** | OAuth proof or signed message from platform | Low-Medium | Proves account ownership |
+| **Government ID** | KYC attestation from a licensed provider | High | Optional; privacy-sensitive |
+| **PGP/GPG key** | Cross-signature with existing PGP key | Medium | Links to existing web of trust |
+
+#### Private key attestation
+
+For higher trust, users can attest to the security properties of their signing environment:
+
+| Attestation | Meaning | Trust boost |
+|---|---|---|
+| **Hardware key storage** | Private key stored in HSM, TPM, or secure enclave | High |
+| **TEE attestation** | Signing performed inside a Trusted Execution Environment (SGX, TrustZone) | High |
+| **Multi-sig setup** | Key operations require multiple approvals | Medium |
+| **Air-gapped signing** | Key never touches a networked device | Medium |
+
+These attestations are self-reported but can be verified by technical means (e.g., Intel SGX remote attestation, TPM endorsement certificates). The reputation contract records the claim; verification is performed off-chain or by specialized resolver contracts.
+
+#### Community ratings (on-chain)
+
+Users can rate other users and individual images. Ratings are EAS attestations referencing the target:
+
+**User rating schema:**
+```
+address ratedUser,        // The user being rated
+uint8 rating,             // 1-5 stars
+bytes32 commentCID        // IPFS CID of optional comment
+```
+
+**Image rating schema:**
+```
+bytes32 imageAttestationUID,  // Reference to the image attestation
+uint8 rating,                 // 1-5 stars (authenticity confidence)
+bytes32 commentCID            // IPFS CID of optional comment
+```
+
+### Reputation Contract
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.19;
+
+import { IEAS, Attestation } from "@eas/contracts/IEAS.sol";
+
+contract ReputationRegistry {
+    IEAS public immutable eas;
+    bytes32 public immutable imageSchema;
+    bytes32 public immutable userRatingSchema;
+    bytes32 public immutable imageRatingSchema;
+    bytes32 public immutable userMetadataSchema;
+
+    struct UserReputation {
+        uint32 imageCount;           // Number of registered images
+        uint32 userRatingCount;      // Number of ratings received (as user)
+        uint64 userRatingSum;        // Sum of ratings (for average)
+        uint32 imageRatingCount;     // Number of ratings on their images
+        uint64 imageRatingSum;       // Sum of image ratings
+        uint32 metadataCount;        // Number of verified metadata items
+        uint16 keyRotations;         // Number of key rotations
+        uint16 revocations;          // Number of emergency revocations
+        uint64 firstSeen;            // Timestamp of first attestation
+    }
+
+    mapping(address => UserReputation) public reputation;
+
+    // Per-image rating aggregation
+    mapping(bytes32 => uint32) public imageRatingCounts;
+    mapping(bytes32 => uint64) public imageRatingSums;
+
+    // Prevent double-rating
+    mapping(bytes32 => bool) public hasRated; // keccak256(rater, target) => bool
+
+    event UserRated(address indexed rater, address indexed user, uint8 rating);
+    event ImageRated(address indexed rater, bytes32 indexed imageUID, uint8 rating);
+    event MetadataSubmitted(address indexed user, bytes32 metadataType);
+    event ImageRegistered(address indexed user);
+
+    constructor(
+        IEAS _eas,
+        bytes32 _imageSchema,
+        bytes32 _userRatingSchema,
+        bytes32 _imageRatingSchema,
+        bytes32 _userMetadataSchema
+    ) {
+        eas = _eas;
+        imageSchema = _imageSchema;
+        userRatingSchema = _userRatingSchema;
+        imageRatingSchema = _imageRatingSchema;
+        userMetadataSchema = _userMetadataSchema;
+    }
+
+    /// @notice Called by the image attestation resolver when a new image is registered.
+    function onImageRegistered(address user) external {
+        if (reputation[user].firstSeen == 0) {
+            reputation[user].firstSeen = uint64(block.timestamp);
+        }
+        reputation[user].imageCount++;
+        emit ImageRegistered(user);
+    }
+
+    /// @notice Rate a user (1-5). One rating per (rater, user) pair.
+    function rateUser(address user, uint8 rating) external {
+        require(rating >= 1 && rating <= 5, "Invalid rating");
+        bytes32 key = keccak256(abi.encodePacked(msg.sender, user));
+        require(!hasRated[key], "Already rated");
+        hasRated[key] = true;
+        reputation[user].userRatingCount++;
+        reputation[user].userRatingSum += rating;
+        emit UserRated(msg.sender, user, rating);
+    }
+
+    /// @notice Rate an image attestation (1-5). One rating per (rater, image) pair.
+    function rateImage(bytes32 imageUID, uint8 rating) external {
+        require(rating >= 1 && rating <= 5, "Invalid rating");
+        bytes32 key = keccak256(abi.encodePacked(msg.sender, imageUID));
+        require(!hasRated[key], "Already rated");
+        hasRated[key] = true;
+
+        // Look up the image attestation to credit the attester
+        Attestation memory att = eas.getAttestation(imageUID);
+        require(att.uid != bytes32(0), "Image not found");
+
+        imageRatingCounts[imageUID]++;
+        imageRatingSums[imageUID] += rating;
+        reputation[att.attester].imageRatingCount++;
+        reputation[att.attester].imageRatingSum += rating;
+        emit ImageRated(msg.sender, imageUID, rating);
+    }
+
+    /// @notice Record that a user submitted verified metadata.
+    function onMetadataSubmitted(address user) external {
+        reputation[user].metadataCount++;
+        emit MetadataSubmitted(user, bytes32(0));
+    }
+
+    /// @notice Record a key rotation event (called by KeyRegistry).
+    function onKeyRotated(address user) external {
+        reputation[user].keyRotations++;
+    }
+
+    /// @notice Record a key revocation event (called by KeyRegistry).
+    function onKeyRevoked(address user) external {
+        reputation[user].revocations++;
+    }
+
+    /// @notice Compute a reputation score (0-1000) for a user.
+    ///         This is a simplified on-chain scoring function.
+    ///         More sophisticated scoring can be done off-chain.
+    function getReputationScore(address user) external view returns (uint256) {
+        UserReputation storage r = reputation[user];
+        if (r.firstSeen == 0) return 0;
+
+        uint256 score = 0;
+
+        // Account age: up to 200 points (max at 365 days)
+        uint256 ageDays = (block.timestamp - r.firstSeen) / 86400;
+        score += (ageDays > 365 ? 200 : (ageDays * 200) / 365);
+
+        // Image count: up to 150 points (max at 100 images)
+        score += (r.imageCount > 100 ? 150 : (uint256(r.imageCount) * 150) / 100);
+
+        // User rating average: up to 250 points
+        if (r.userRatingCount > 0) {
+            uint256 avg = (r.userRatingSum * 100) / r.userRatingCount; // avg * 100
+            score += (avg * 250) / 500; // scale to 0-250
+        }
+
+        // Image rating average: up to 200 points
+        if (r.imageRatingCount > 0) {
+            uint256 avg = (r.imageRatingSum * 100) / r.imageRatingCount;
+            score += (avg * 200) / 500;
+        }
+
+        // Metadata: up to 150 points (30 per verified item, max 5)
+        uint256 metaPts = uint256(r.metadataCount) * 30;
+        score += (metaPts > 150 ? 150 : metaPts);
+
+        // Key hygiene: up to 50 points
+        if (r.keyRotations > 0 && r.revocations == 0) {
+            score += 50;
+        } else if (r.revocations > 0) {
+            // Penalize revocations (key compromise)
+            uint256 penalty = uint256(r.revocations) * 25;
+            score = score > penalty ? score - penalty : 0;
+        }
+
+        return score > 1000 ? 1000 : score;
+    }
+}
+```
+
+**Gas costs for reputation operations:**
+
+| Operation | Gas | Cost on L2 | Notes |
+|---|---|---|---|
+| `rateUser()` | ~50,000 | ~$0.05 | One-time per (rater, user) pair |
+| `rateImage()` | ~60,000 | ~$0.06 | One-time per (rater, image) pair |
+| `getReputationScore()` | ~10,000 | Free (view) | On-chain scoring |
+| `onImageRegistered()` | ~25,000 | Included in resolver | Called by resolver |
+| `onMetadataSubmitted()` | ~25,000 | ~$0.025 | Per metadata item |
+
+### Reputation Scoring Weights
+
+The on-chain scoring function above uses the following weight distribution:
+
+| Component | Max points | Weight | Notes |
+|---|---|---|---|
+| Account age | 200 | 20% | Linear up to 365 days |
+| Image count | 150 | 15% | Linear up to 100 images |
+| User ratings (average) | 250 | 25% | Community trust |
+| Image ratings (average) | 200 | 20% | Content quality |
+| Verified metadata | 150 | 15% | Identity strength (30 pts per item, max 5) |
+| Key hygiene | 50 | 5% | Bonus for rotation without revocation |
+| **Total** | **1000** | **100%** | |
+
+The on-chain scoring is intentionally simple (fits in a view function, no gas cost to query). More sophisticated scoring — incorporating graph analysis, Sybil detection, cross-referencing with external data, or ML-based anomaly detection — can be computed off-chain by an indexer and published as a separate EAS attestation.
+
+### Business Model: Platform Services
+
+The Key Registry, Reputation Registry, and Image Authentication Resolver form a suite of smart contract services that we deploy, maintain, and offer as infrastructure. Revenue opportunities include:
+
+| Service | Model | Notes |
+|---|---|---|
+| **Image attestation** (resolver) | Free or low per-tx fee | Core service; drives adoption |
+| **Key Registry** | Free | Essential infrastructure; builds lock-in |
+| **Reputation queries** (on-chain) | Free (view functions) | Public good; drives ecosystem |
+| **Premium reputation** (off-chain) | Subscription or per-query fee | Advanced scoring, Sybil detection, graph analysis |
+| **Verified metadata** | Per-verification fee | Email verification oracle, domain check, KYC integration |
+| **Enterprise API** | SaaS subscription | Batch registration, custom schemas, priority indexing, SLA |
+| **White-label** | License fee | Custom deployment of the full stack for organizations |
+| **Dispute resolution** | Per-case fee | Mediated resolution for contested image authenticity |
+
+The smart contracts themselves are open-source and permissionless — anyone can interact with them directly. The business model is built on the value-added services around the contracts: user-friendly interfaces, verification oracles, advanced analytics, and enterprise integrations.
 
 ## Implementation Roadmap
 
-### Phase 1: Schema and Resolver
+### Phase 1: Core Contracts and Schema
 
-- Register the EAS schema on Base Sepolia (testnet)
-- Deploy the `ImageAuthResolver` contract
+- Deploy `KeyRegistry` contract on Base Sepolia (testnet)
+- Register the EAS image authentication schema
+- Deploy `ImageAuthResolver` with duplicate detection and signature-prefix indexing
+- Integrate resolver with `ReputationRegistry.onImageRegistered()`
+- Test key registration, rotation, revocation, and validity checks
 - Test duplicate detection and signature-prefix lookup
-- Estimated effort: 1-2 days
-
-### Phase 2: Client Integration
-
-- Extend the unified API (`stego_sig.h`) with a registration step
-- Implement IPFS metadata upload (thumbnail, EXIF)
-- Implement EAS attestation creation via the EAS SDK
-- Add pre-registration duplicate check
 - Estimated effort: 3-5 days
 
-### Phase 3: Verifier
+### Phase 2: Reputation System
+
+- Deploy `ReputationRegistry` contract
+- Register EAS schemas for user ratings, image ratings, and user metadata
+- Implement rating functions and on-chain scoring
+- Test scoring weights and edge cases
+- Estimated effort: 2-3 days
+
+### Phase 3: Client Integration
+
+- Extend the unified API (`stego_sig.h`) with key registration and image registration steps
+- Implement IPFS metadata upload (AVIF thumbnail, EXIF)
+- Implement EAS attestation creation via the EAS SDK
+- Add pre-registration duplicate check and key validity check
+- Integrate key rotation workflow into the signing flow
+- Estimated effort: 5-7 days
+
+### Phase 4: Verifier
 
 - Implement signature-prefix lookup via EAS GraphQL
-- Integrate PK retrieval and verification
-- Add file hash comparison
-- Build a simple verification CLI/web tool
+- Integrate PK retrieval, key validity check, and signature verification
+- Add file hash comparison and reputation score display
+- Build a verification CLI/web tool
 - Estimated effort: 3-5 days
 
-### Phase 4: Production Deployment
+### Phase 5: Metadata Verification Services
 
-- Deploy to Base mainnet (or Optimism)
-- Register production schema
-- Audit resolver contract
-- Set up IPFS pinning (Pinata, web3.storage, or self-hosted)
-- Estimated effort: 1-2 days
+- Implement email verification oracle (DKIM proof)
+- Implement domain verification (DNS TXT / `.well-known`)
+- Integrate with EAS user metadata schema
+- Connect to reputation scoring
+- Estimated effort: 5-7 days
+
+### Phase 6: Production Deployment
+
+- Deploy all contracts to Base mainnet (or Optimism)
+- Register production schemas
+- Audit all contracts (KeyRegistry, ReputationRegistry, ImageAuthResolver)
+- Set up IPFS pinning (Storacha or Filebase)
+- Estimated effort: 2-3 days
 
 ## Cost Projections
 
