@@ -98,12 +98,19 @@ endif
 # ====================================================================
 # Common targets
 # ====================================================================
-.PHONY: test clean all
+.PHONY: test clean all stardust_payload_demo
 
 all: stego_demo
+
+stardust_payload_demo: $(if $(filter $(BACKEND),uov),stego_demo.c $(BACKEND_SRC) stego_sig.h $(UOV_CSRCS),$(BLS_BUILD)/lib/librelic_s.a stego_sig.h $(BACKEND_SRC)) stardust_payload_demo.c
+ifeq ($(BACKEND),uov)
+	$(CC) $(CFLAGS) $(DEFINES) $(INCLUDES) -o $@ stardust_payload_demo.c $(BACKEND_SRC) $(UOV_CSRCS) $(LIBS)
+else
+	$(CC) $(CFLAGS) $(INCLUDES) -o $@ stardust_payload_demo.c $(BACKEND_SRC) $(LIBS)
+endif
 
 test: stego_demo
 	./stego_demo
 
 clean:
-	rm -f stego_demo
+	rm -f stego_demo stardust_payload_demo

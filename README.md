@@ -69,6 +69,7 @@ For BLS, the pHash can be omitted from the payload (e.g., looked up from a ledge
 - [Ethereum Ledger Implementation](ethereum-ledger/) -- Solidity contracts, deployment scripts, and E2E demo
 - [Web UI](ui/) -- Scaffold-ETH 2 contract explorer (`docker compose up` → http://localhost:3000/debug)
 - [SE2 UI Customizations](docs/ui-se2-customizations.md) -- All changes made to upstream Scaffold-ETH 2 and the project-specific UI extensions
+- [Stardust Stego Demo](docs/stardust-stego-demo.md) -- End-to-end image flow using castLabs Stardust as the stego transport layer
 - [Video Extension](docs/video-extension.md) -- Merkle tree approach for authenticating video with per-interval tamper detection
 
 The Web UI includes custom routes:
@@ -103,6 +104,14 @@ SIMULATE_NETWORK=arbitrumNova npx hardhat run scripts/demo.js --network localhos
 ```
 
 See [ethereum-ledger/](ethereum-ledger/) for full setup options (Docker, manual, testnet).
+
+Run the additional image stego transport demo using castLabs Stardust:
+
+```bash
+./scripts/stardust_image_demo.sh
+```
+
+This flow uses the real BLS-BN158 payload generator from `unified-api/`, embeds the 184-bit `salt || sig` payload into an image using Stardust, extracts it again, and verifies the recovered payload.
 
 ## Architecture
 

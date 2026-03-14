@@ -1,3 +1,6 @@
 [submodule "BLS/relic"]
 	path = BLS/relic
 	url = https://github.com/relic-toolkit/relic.git
+[submodule "stardust"]
+	path = stardust
+	url = https://github.com/castlabs/stardust.git

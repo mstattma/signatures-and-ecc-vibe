@@ -16,9 +16,16 @@ BLS/size_test_*
 
 # Unified API build artifacts
 unified-api/stego_demo
+unified-api/stardust_payload_demo
 
 # Ethereum ledger build artifacts
 ethereum-ledger/node_modules/
 ethereum-ledger/cache/
 ethereum-ledger/artifacts/
 ethereum-ledger/.env
+
+# Stardust build artifacts
+stardust/build/
+tmp_stardust_demo/
+tmp_stego_test/
+tmp_stego_test_hd/
