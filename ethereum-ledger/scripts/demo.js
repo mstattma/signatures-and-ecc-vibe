@@ -96,7 +96,8 @@ async function main() {
   const network = await ethers.provider.getNetwork();
   const isLocal = network.chainId === 31337n;
 
-  // Set the active network for gas cost estimation
+  // Set the active network for gas cost estimation.
+  // Use SIMULATE_NETWORK env var to override (e.g., simulate Arbitrum Nova costs locally).
   const chainIdToNetwork = {
     31337n: "localhost",
     84532n: "baseSepolia",
@@ -105,8 +106,19 @@ async function main() {
     42170n: "arbitrumNova",
     1n: "l1",
   };
-  activeNetwork = chainIdToNetwork[network.chainId] || "base";
-  console.log("Network:", isLocal ? "hardhat (local)" : `chainId ${network.chainId}`);
+  const simulatedNetwork = process.env.SIMULATE_NETWORK;
+  if (simulatedNetwork && GAS_PRICES[simulatedNetwork]) {
+    activeNetwork = simulatedNetwork;
+  } else {
+    activeNetwork = chainIdToNetwork[network.chainId] || "base";
+  }
+
+  const priceInfo = GAS_PRICES[activeNetwork] || GAS_PRICES.base;
+  if (simulatedNetwork) {
+    console.log(`Network: local (simulating ${priceInfo.label})`);
+  } else {
+    console.log("Network:", isLocal ? "hardhat (local)" : `chainId ${network.chainId}`);
+  }
   console.log("");
 
   let keyRegistry, bloomFilter, resolver, schemaUID, eas;

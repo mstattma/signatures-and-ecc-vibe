@@ -144,4 +144,33 @@ ETH_PRICE_USD=2500 npx hardhat run scripts/demo.js --network localhost
 #   Key registered! 200353 gas (~$0.0050 on localhost (Base-equivalent) at ETH=$2500)
 ```
 
+### Simulating Different Networks Locally
+
+You can test any network's gas pricing against a local Hardhat node using the `SIMULATE_NETWORK` environment variable. The contracts and logic are identical — only the cost display changes.
+
+```bash
+# Start the local node (terminal 1)
+npx hardhat node
+
+# Deploy once (terminal 2)
+npx hardhat run scripts/deploy.js --network localhost
+
+# Run as Base (default)
+npx hardhat run scripts/demo.js --network localhost
+#   Key registered! 200353 gas (~$0.0060 on localhost (Base-equivalent) at ETH=$3000)
+
+# Simulate Arbitrum Nova pricing (5x cheaper)
+SIMULATE_NETWORK=arbitrumNova npx hardhat run scripts/demo.js --network localhost
+#   Key registered! 200353 gas (~$0.0012 on Arbitrum Nova at ETH=$3000)
+
+# Simulate Ethereum L1 pricing (3000x more expensive)
+SIMULATE_NETWORK=l1 npx hardhat run scripts/demo.js --network localhost
+#   Key registered! 200353 gas (~$18.03 on Ethereum L1 at ETH=$3000)
+
+# Simulate Optimism pricing
+SIMULATE_NETWORK=optimism npx hardhat run scripts/demo.js --network localhost
+```
+
+Available `SIMULATE_NETWORK` values: `base`, `optimism`, `arbitrumNova`, `l1`, `baseSepolia`, `localhost`.
+
 **Note on L2 gas pricing:** The gas prices above are approximate effective rates that include both L2 execution cost and the amortized L1 data posting fee (which L2s charge as part of the L2 gas price). Actual costs vary with L1 gas prices and network congestion. Arbitrum Nova is 5-10x cheaper than Base/Optimism because it uses a Data Availability Committee (DAC) instead of posting all data to L1.
