@@ -24,10 +24,10 @@ The signature is embedded steganographically in the image. The receiver extracts
 
 ## Unified API
 
-The [unified/](unified/) directory provides a **scheme-agnostic API** (`stego_sig.h`) that abstracts over all signature schemes. A single `stego_demo.c` works identically with any backend:
+The [unified-api/](unified-api/) directory provides a **scheme-agnostic API** (`stego_sig.h`) that abstracts over all signature schemes. A single `stego_demo.c` works identically with any backend:
 
 ```bash
-cd unified
+cd unified-api
 make test SCHEME=uov-80       # Post-quantum, 400-bit payload
 make test SCHEME=bls-bn158    # Classical, 264-352 bit payload
 ```
@@ -50,7 +50,7 @@ make test SCHEME=bls-bn158    # Classical, 264-352 bit payload
 
 ## Documentation
 
-- [Unified API](unified/) -- Scheme-agnostic signature API with payload size tables
+- [Unified API](unified-api/) -- Scheme-agnostic signature API with payload size tables
 - [UOV Implementation](UOV/) -- Post-quantum signatures with message recovery
 - [BLS Implementation](BLS/) -- Classical BLS signatures (BN-P158 and BLS12-381)
 - [Scheme Comparison](docs/scheme-comparison.md) -- Analysis of all PQC signature candidates considered
