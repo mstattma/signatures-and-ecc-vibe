@@ -31,7 +31,13 @@ if (externalChainData) {
 }
 
 export const decodeTransactionData = (tx: TransactionWithFunction) => {
-  if (tx.input.length >= 10 && !tx.input.startsWith("0x60e06040")) {
+  // Contract creation transactions start with 0x6080604052 (or similar init code prefix).
+  // These cannot be decoded as function calls — label them explicitly.
+  if (tx.input.startsWith("0x6080604") || tx.input.startsWith("0x60e06040") || tx.input.startsWith("0x60a06040")) {
+    tx.functionName = "📄 Contract Creation";
+    return tx;
+  }
+  if (tx.input.length >= 10) {
     let foundInterface = false;
     for (const [, contractAbi] of Object.entries(interfaces)) {
       try {
