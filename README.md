@@ -20,8 +20,8 @@ The signature is embedded steganographically in the image. The receiver extracts
 |-----------|--------|-----------|----------|-------------|-------------------|-----------------|--------|
 | [UOV/](UOV/) | Oil and Vinegar (80-bit) | 400 | 204,000 | 400 bits (sig only, pHash recovered) | 80 bits | ~40-48 bits (est.) | Working prototype |
 | [UOV/](UOV/) | Oil and Vinegar (100-bit) | 504 | 403,200 | 504 bits (sig only, pHash recovered) | 100 bits | ~50-60 bits (est.) | Working prototype |
-| [BLS/](BLS/) | BLS (BN-P158) | 168 | 328 | 264-352 bits (pHash + sig, no PK) | ~78 bits | 0 (broken by Shor) | Working prototype |
-| [BLS/](BLS/) | BLS (BLS12-381) | 392 | 776 | 488-576 bits (pHash + sig, no PK) | ~117-120 bits | 0 (broken by Shor) | Working prototype |
+| [BLS/](BLS/) | BLS (BN-P158) | 168 | 328 | 280-368 bits (pHash + salt + sig, no PK) | ~78 bits | 0 (broken by Shor) | Working prototype |
+| [BLS/](BLS/) | BLS (BLS12-381) | 392 | 776 | 504-592 bits (pHash + salt + sig, no PK) | ~117-120 bits | 0 (broken by Shor) | Working prototype |
 
 ## Unified API
 
@@ -37,19 +37,19 @@ make test SCHEME=bls-bn158    # Classical, 264-352 bit payload
 
 | pHash | UOV-80 (max 144b) | UOV-100 (max 184b) | BLS-BN158 | BLS12-381 |
 |---|---|---|---|---|
-| 96-bit | 400 | 504 | **264** | 488 |
-| 144-bit | 400 | 504 | **312** | 536 |
-| 184-bit | N/A (truncated) | 504 | **352** | 576 |
+| 96-bit | 400 | 504 | **280** | 504 |
+| 144-bit | 400 | 504 | **328** | 552 |
+| 184-bit | N/A (rejected) | 504 | **368** | 592 |
 
-> **Note:** UOV-80 can sign pHashes up to **144 bits** (18 bytes). A 184-bit pHash exceeds the recoverable digest size and would be silently truncated -- the implementation rejects this with an error. Use UOV-100 (max 184 bits) or BLS for larger pHashes.
+> **Note:** All schemes include a 2-byte (16-bit) salt by default. For UOV the salt is embedded in the recovered digest (zero extra payload). For BLS the salt is transmitted explicitly in the payload: `pHash || salt || sig`. UOV-80 can sign pHashes up to **144 bits** (18 bytes); larger pHashes are rejected. Use UOV-100 (max 184 bits) or BLS for larger pHashes.
 
 ### Payload sizes (bits, with PK in-band)
 
 | pHash | UOV-80 (max 144b) | UOV-100 (max 184b) | BLS-BN158 | BLS12-381 |
 |---|---|---|---|---|
-| 96-bit | 204,400 | 403,704 | **592** | 1,264 |
-| 144-bit | 204,400 | 403,704 | **640** | 1,312 |
-| 184-bit | N/A | 403,704 | **680** | 1,352 |
+| 96-bit | 204,400 | 403,704 | **608** | 1,280 |
+| 144-bit | 204,400 | 403,704 | **656** | 1,328 |
+| 184-bit | N/A | 403,704 | **696** | 1,368 |
 
 ## Documentation
 
@@ -66,7 +66,7 @@ make test SCHEME=bls-bn158    # Classical, 264-352 bit payload
 [pHash(image)] ──► [sign] ──► [outer RS-ECC] ──► [interleaver] ──► [stego embed]
 ```
 
-Each implementation provides the signature layer. UOV recovers the pHash from the signature (message recovery); BLS transmits the pHash explicitly alongside the signature. The outer ECC and stego embedding layers are planned future work.
+Each implementation provides the signature layer. Both schemes include a 2-byte salt (configurable) to ensure similar images produce different signatures. UOV recovers the pHash from the signature (message recovery, salt embedded in digest); BLS transmits the pHash and salt explicitly alongside the signature. The outer ECC and stego embedding layers are planned future work.
 
 ### Ledger-Backed Verification (Planned)
 

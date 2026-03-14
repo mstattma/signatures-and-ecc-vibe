@@ -14,8 +14,10 @@
  * Payload format:
  *   UOV (message recovery): [signature] [|| PK]
  *     pHash is recovered from the signature via P(w), not transmitted.
- *   BLS (no message recovery): [pHash || signature] [|| PK]
- *     pHash must be transmitted explicitly.
+ *     Salt is embedded inside the recovered digest (salt-in-digest).
+ *   BLS (no message recovery): [pHash || salt || signature] [|| PK]
+ *     pHash and salt are transmitted explicitly.
+ *     The BLS signature covers pHash || salt.
  *
  * The API abstracts away this difference: the caller always provides a pHash
  * and gets back a payload. On verification, the caller gets back the
@@ -126,8 +128,9 @@ int stego_keygen(uint8_t *pk, int *pk_len, uint8_t *sk, int *sk_len);
  * @param phash_len    pHash length in bytes.
  * @param sk           Secret key (from stego_keygen).
  * @param sk_len       Secret key length.
- * @param salt         Salt bytes (UOV only; NULL for random, ignored for BLS).
- * @param salt_len     Salt length (UOV only; 0 for random, ignored for BLS).
+ * @param salt         Salt bytes (any length; NULL for random). Hashed down to
+ *                     the scheme's internal salt size (2 bytes default for both).
+ * @param salt_len     Salt length (0 for random).
  * @param append_pk    1 to append PK to payload, 0 for signature only.
  * @param pk           Public key (required if append_pk=1).
  * @param pk_len       Public key length.
