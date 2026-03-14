@@ -115,6 +115,10 @@ This enables decoding of our external contract calls such as:
 - `add`
 - `mightContain`
 
+User-visible result:
+
+- external contract transactions in the block explorer now show real function names instead of `⚠️ Unknown`
+
 ### 2. Label contract creation transactions correctly
 
 #### Modified file
@@ -142,6 +146,11 @@ This caused contract deployment transactions to fall through to the function dec
 We now detect contract-creation payloads and label them explicitly as:
 
 - `📄 Contract Creation`
+
+User-visible result:
+
+- contract deployment transactions no longer appear as `Unknown`
+- the transaction list now clearly distinguishes deployments from normal function calls
 
 ## Homepage Customization
 
@@ -216,6 +225,17 @@ These pages are not part of upstream SE2.
   - last key activation time
 - links each user to the Keys page
 
+### Event-driven user discovery
+
+The Users page intentionally does **not** depend on a dedicated user registry contract.
+Instead, it derives the user list from historical `KeyActivated` events.
+
+Implications:
+
+- if an address has never emitted `KeyActivated`, it will not appear
+- the page is indexed by event history, not by explicit contract storage iteration
+- this keeps on-chain complexity low while still providing a useful user directory
+
 ### Keys page
 
 #### Added files
@@ -239,6 +259,19 @@ These pages are not part of upstream SE2.
 - form to revoke a key by index
 - supports deep linking via query param:
   - `/keys?address=0x...`
+
+### State-driven key details
+
+Unlike the Users page, the Keys page reads live contract state:
+
+- `keyCount(address)`
+- `activeKeyIndex(address)`
+- `getKey(address, index)`
+
+So the UI combines:
+
+- **event history** to discover which users exist
+- **contract reads** to show each user's current and historical key state
 
 ### Bloom page
 

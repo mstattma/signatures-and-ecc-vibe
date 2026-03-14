@@ -71,6 +71,14 @@ For BLS, the pHash can be omitted from the payload (e.g., looked up from a ledge
 - [SE2 UI Customizations](docs/ui-se2-customizations.md) -- All changes made to upstream Scaffold-ETH 2 and the project-specific UI extensions
 - [Video Extension](docs/video-extension.md) -- Merkle tree approach for authenticating video with per-interval tamper detection
 
+The Web UI includes custom routes:
+
+- `/users` -- registered users discovered from `KeyActivated` events
+- `/keys` -- key lifecycle explorer and key management UI
+- `/bloom` -- cross-chain duplicate detection explorer
+- `/debug` -- raw contract interaction
+- `/blockexplorer` -- local transaction explorer with decoded external contract calls
+
 ## Quick Start (Docker)
 
 The full stack (Hardhat blockchain node + Scaffold-ETH 2 UI) runs with a single command:

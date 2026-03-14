@@ -196,6 +196,8 @@ node scripts/export-abis.js
   - `/users`
   - `/keys`
   - `/bloom`
+- `Users` is event-driven (derived from `KeyActivated` event history).
+- `Keys` is state-driven (`keyCount`, `activeKeyIndex`, `getKey`).
 - URL linking from Users to Keys: `/keys?address=0x...`
 - Homepage and debug page use project-specific copy, not default SE2 boilerplate.
 - `decodeTxData.ts` has local patches:

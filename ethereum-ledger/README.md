@@ -224,6 +224,25 @@ Open **http://localhost:3000/debug** to interact with the contracts. The debug p
 - **KeyRegistry**: register/rotate/revoke keys, query validity
 - **CrossChainBloomFilter**: add entries, check duplicates, view filter state
 
+### Custom UI pages
+
+In addition to the generic SE2 debug page, the UI exposes project-specific routes:
+
+| Route | Purpose |
+|---|---|
+| `/users` | Shows all users discovered from `KeyActivated` events |
+| `/keys` | Lists key history for a selected address; register/revoke keys |
+| `/bloom` | Shows Bloom filter status and lets you query `(pHash, salt)` duplicates |
+| `/debug` | Raw SE2 contract interaction page |
+| `/blockexplorer` | Transaction explorer with decoded external contract function calls |
+
+Notes:
+
+- **Users page is event-driven.** It discovers users by scanning `KeyActivated` events from block 0, not from a dedicated on-chain user registry.
+- **Keys page is state-driven.** It reads `keyCount`, `activeKeyIndex`, and `getKey(address, index)` from `KeyRegistry`.
+- **Deep linking works** from the Users page to the Keys page via `/keys?address=0x...`.
+- The block explorer now labels contract deployments as **`📄 Contract Creation`** and decodes our external contract calls instead of showing `Unknown`.
+
 The UI container automatically:
 1. Waits for the node container to be healthy (contracts deployed)
 2. Reads `deployment.json` and contract artifacts from a shared volume
