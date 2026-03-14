@@ -33,17 +33,124 @@ Use the existing [EAS](https://attest.org) protocol. Register a schema for image
 
 ## Proposed Implementation
 
-### Layer 1 vs Layer 2
+### Chain Selection: Multi-Chain Deployment
 
-| Chain | Attestation gas | Cost at 30 gwei | Cost at $3000 ETH | Notes |
-|---|---|---|---|---|
-| Ethereum L1 | ~80,000 | 2,400,000 gwei | **~$7.20** | Too expensive for per-image registration |
-| Optimism | ~80,000 | ~0.01 gwei L2 + L1 data | **~$0.01-0.05** | EAS pre-deployed at `0x4200...0021` |
-| Base | ~80,000 | ~0.01 gwei L2 + L1 data | **~$0.01-0.05** | EAS pre-deployed at `0x4200...0021` |
-| Arbitrum | ~80,000 | ~0.1 gwei L2 + L1 data | **~$0.01-0.05** | EAS deployed |
-| Arbitrum Nova | ~80,000 | Ultra-low | **~$0.001-0.01** | Cheapest; AnyTrust chain |
+All contracts are deployed identically on multiple L2 chains. The user selects which chain to use based on their cost/trust preference. The same contract ABIs, schemas, and client SDK work across all chains — only the RPC endpoint changes.
 
-**Recommendation: Base or Optimism** as primary chain. Both are OP Stack L2s with EAS pre-deployed as a system contract, strong ecosystem support, and sub-cent attestation costs. Arbitrum Nova is the cheapest option if cost is the dominant concern.
+#### Supported chains
+
+| Chain | Type | Data availability | Trust model | EAS | Attestation cost | Notes |
+|---|---|---|---|---|---|---|
+| Ethereum L1 | L1 | On-chain | Ethereum consensus | Deployed | **~$7.20** | Too expensive for per-image; use for L1 anchoring only |
+| **Base** | Optimistic rollup (OP Stack) | L1 calldata/blobs | L1 + sequencer (fraud proof fallback) | Pre-deployed `0x4200...0021` | **~$0.01-0.05** | Coinbase-operated; largest retail user base |
+| **Optimism** | Optimistic rollup (OP Stack) | L1 calldata/blobs | L1 + sequencer (fraud proof fallback) | Pre-deployed `0x4200...0021` | **~$0.01-0.05** | Optimism Collective; public goods focus |
+| **Arbitrum One** | Optimistic rollup (Nitro) | L1 calldata/blobs | L1 + sequencer (fraud proof fallback) | Deployed | **~$0.01-0.05** | Strongest Arbitrum chain; full L1 DA |
+| **Arbitrum Nova** | AnyTrust (Nitro + DAC) | **Data Availability Committee** | L1 + DAC (≥2 of ~7 honest) | Deployed | **~$0.001-0.01** | 5-10x cheapest; weaker trust model |
+
+#### Trust model comparison
+
+**Base / Optimism / Arbitrum One** (full rollups):
+```
+Ethereum L1 consensus (~$50B+ economic security)
+  └── All L2 transaction data posted to L1 (calldata or EIP-4844 blobs)
+        └── Anyone can reconstruct L2 state independently
+              └── Fraud proofs enforceable on L1 (7-day challenge window)
+                    └── Our contracts + EAS attestations (fully verifiable from L1)
+```
+
+All transaction data is available on Ethereum L1. Even if the sequencer goes down or acts maliciously, anyone can reconstruct the full chain state and submit fraud proofs. This is the strongest trust model short of L1 itself.
+
+**Arbitrum Nova** (AnyTrust):
+```
+Ethereum L1 consensus
+  └── L2 state root posted to L1 (verifiable)
+        └── Transaction data held by Data Availability Committee (DAC)
+              └── DAC members: Offchain Labs, Consensys, Google Cloud, Quicknode, P2P, Reddit, ...
+                    └── Trust: ≥2 of ~7 members must be honest and available
+                          └── Our contracts + EAS attestations
+```
+
+Transaction data is NOT posted to L1. Instead, the DAC signs a data availability certificate that is posted to L1. If all DAC members collude or go offline, transaction data could become unavailable and fraud proofs could not be constructed.
+
+**Risk assessment for image authentication on Nova:**
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| DAC data withholding | Attestations become unverifiable from L1 | IPFS dual-write: full attestation data on IPFS independently |
+| DAC collusion (fake attestations) | Forged attestation records | Signatures are cryptographically verifiable with PK alone; doesn't depend on chain |
+| DAC downtime | Temporary inability to register new images | Fall back to Base/Optimism; retry when Nova recovers |
+| Long-term DAC dissolution | Historical data potentially lost | IPFS + periodic L1 anchoring preserves data independently |
+
+**Nova is acceptable for image authentication** because:
+1. No funds are at risk (unlike DeFi)
+2. Full attestation data is independently stored on IPFS (hybrid mode)
+3. Signatures are verifiable with just the PK — chain is only needed for timestamps, duplicate detection, and reputation
+4. Periodic L1 anchoring can provide additional trust for high-value attestations
+
+#### Multi-chain deployment architecture
+
+```
+                    ┌─────────────────────────────────────────┐
+                    │              Client SDK                  │
+                    │  (same ABI, same schema, same logic)     │
+                    └───────┬──────────┬──────────┬───────────┘
+                            │          │          │
+                    ┌───────▼──┐ ┌─────▼────┐ ┌──▼──────────┐
+                    │   Base    │ │ Optimism │ │ Arb. Nova   │
+                    │ (default) │ │          │ │ (cheapest)  │
+                    └───────┬──┘ └─────┬────┘ └──┬──────────┘
+                            │          │          │
+                    Same contracts deployed on each:
+                    - KeyRegistry
+                    - ImageAuthResolver (or LightRegistration)
+                    - ReputationRegistry
+                    - EAS (pre-deployed / deployed)
+                            │          │          │
+                            └──────────┼──────────┘
+                                       │
+                              ┌────────▼────────┐
+                              │   IPFS / Storacha │ (shared across all chains)
+                              └─────────────────┘
+                                       │
+                              ┌────────▼────────┐
+                              │  Ethereum L1     │ (optional periodic anchoring)
+                              └─────────────────┘
+```
+
+**Key design decisions for multi-chain:**
+
+1. **Same schema UID on all chains.** EAS schemas are registered per-chain, but we use the same schema definition everywhere. The schema UID (a deterministic hash of the schema string + resolver + revocable flag) will be identical if the resolver address differs, so we document the schema definition rather than a specific UID.
+
+2. **IPFS is shared.** The metadataCID stored on-chain points to the same IPFS content regardless of which chain the attestation is on. A verifier on any chain can fetch the same IPFS data.
+
+3. **Duplicate detection is per-chain.** The `(pHash, salt)` uniqueness constraint is enforced per-chain by each chain's resolver. If a user registers on both Base and Nova, that's two separate registrations (same image, two chains). This is by design — the user may want redundancy.
+
+4. **Reputation is per-chain.** Each chain has its own ReputationRegistry. Cross-chain reputation aggregation is a future enhancement (via cross-chain messaging or an off-chain indexer that reads all chains).
+
+5. **Key registry is per-chain.** The user registers their signing key on each chain they use. Key rotation must be performed on each chain independently.
+
+#### Recommended chain per use case
+
+| Use case | Recommended chain | Cost per image (hybrid) | Trust level |
+|---|---|---|---|
+| **Default / general purpose** | **Base** | ~$0.07 | High (full rollup) |
+| **Public goods / grants** | **Optimism** | ~$0.07 | High (full rollup) |
+| **High volume / cost-sensitive** | **Arbitrum Nova** | **~$0.007-0.015** | Moderate (AnyTrust DAC) |
+| **Legal / forensic evidence** | **Base + L1 anchor** | ~$0.07 + $7/batch | Highest (L1 timestamp) |
+| **Maximum decentralization** | **Arbitrum One** | ~$0.07 | High (full rollup, non-Coinbase) |
+| **Redundancy** | **Base + Nova** | ~$0.08 combined | High + cheap backup |
+
+#### Hardening for Arbitrum Nova
+
+For production deployment on Nova, these mitigations should be applied:
+
+1. **IPFS dual-write (mandatory):** Always store the full off-chain attestation on IPFS regardless of on-chain success. This makes attestation data independently verifiable even if Nova's DAC fails.
+
+2. **Periodic L1 anchoring (recommended for high-value):** Anchor a Merkle root of a batch of attestations on Ethereum L1. Cost: ~$7 per batch, amortized across hundreds or thousands of images. This provides L1-grade timestamps.
+
+3. **Cross-chain fallback:** If Nova is unavailable, the client automatically falls back to Base or Optimism for registration. The IPFS data is the same either way.
+
+4. **Event-based backup:** An off-chain indexer monitors Nova events and replicates registration data to a secondary store (database, or mirror registrations on a full rollup).
 
 ### EAS Schema Design
 
@@ -1091,41 +1198,51 @@ The smart contracts themselves are open-source and permissionless — anyone can
 
 ## Cost Projections
 
-### Fully on-chain (EAS attestation + resolver with all checks)
+### Hybrid registration by chain (recommended — all checks, data on IPFS)
 
-| Volume | Monthly cost (Base L2) | Notes |
-|---|---|---|
-| 100 images/month | ~$13-17 | Hobbyist/individual |
-| 1,000 images/month | ~$130-170 | Small organization |
-| 10,000 images/month | ~$1,000-1,200 | With batching |
-| 100,000 images/month | ~$10,000-12,000 | With batching |
+| Volume | Base / Optimism | Arbitrum Nova | Notes |
+|---|---|---|---|
+| 100 images/month | **~$7** | **~$0.70-1.50** | All checks preserved on both |
+| 1,000 images/month | **~$70** | **~$7-15** | |
+| 10,000 images/month | **~$700** | **~$70-150** | |
+| 100,000 images/month | **~$7,000** | **~$700-1,500** | Nova is 5-10x cheaper |
 
-### Hybrid registration (recommended — all checks, data on IPFS)
+### Fully on-chain by chain (EAS attestation + resolver with all checks)
 
-| Volume | Monthly cost | Notes |
-|---|---|---|
-| 100 images/month | **~$7** | All checks preserved |
-| 1,000 images/month | **~$70** | ~55% cheaper than fully on-chain |
-| 10,000 images/month | **~$700** | |
-| 100,000 images/month | **~$7,000** | |
+| Volume | Base / Optimism | Arbitrum Nova | Notes |
+|---|---|---|---|
+| 100 images/month | ~$13-17 | ~$1.30-3.50 | |
+| 1,000 images/month | ~$130-170 | ~$13-35 | |
+| 10,000 images/month | ~$1,000-1,200 | ~$100-240 | With batching |
+| 100,000 images/month | ~$10,000-12,000 | ~$1,000-2,400 | With batching |
 
 ### Off-chain attestation + on-chain anchor (no dup/key/rep checks)
 
-| Volume | Monthly cost (anchor + storage) | Notes |
-|---|---|---|
-| 100 images/month | ~$4 + free storage | ~$0.04/image; no on-chain duplicate detection |
-| 1,000 images/month | ~$40 + free storage | |
-| 10,000 images/month | ~$400 + free storage | |
-| 100,000 images/month | ~$4,000 + ~$1-2/mo storage | ~75% cheaper than fully on-chain |
+| Volume | Base / Optimism | Arbitrum Nova | Notes |
+|---|---|---|---|
+| 100 images/month | ~$4 | ~$0.40-1.00 | No duplicate detection |
+| 1,000 images/month | ~$40 | ~$4-10 | |
+| 100,000 images/month | ~$4,000 | ~$400-1,000 | |
 
 ### Fully off-chain (no on-chain guarantees)
 
 | Volume | Monthly cost | Notes |
 |---|---|---|
-| Any volume up to 5 GB cumulative | **$0** | Storacha/Filebase free tier |
+| Any volume up to 5 GB cumulative | **$0** | Storacha/Filebase free tier; any chain (no chain used) |
 | 1M images/month (30 GB cumulative growth) | ~$1-5/month storage | Zero gas; no on-chain checks |
 
-For very high volumes, a hybrid approach using off-chain attestations with periodic on-chain Merkle root anchoring (one tx per batch) can reduce costs further while still providing trusted timestamps for the entire batch. However, this does not provide per-image duplicate detection or key validity checks — those require individual on-chain registrations (either fully on-chain or hybrid mode).
+### Multi-chain cost example
+
+A user who deploys on both Base (for trust) and Arbitrum Nova (for cost) and registers each image on the cheaper chain with periodic L1 anchoring:
+
+| Volume | Nova hybrid registration | L1 anchor (monthly batch) | Total |
+|---|---|---|---|
+| 100 images/month | ~$1 | ~$7 (1 batch) | **~$8** |
+| 1,000 images/month | ~$10 | ~$7 (1 batch) | **~$17** |
+| 10,000 images/month | ~$100 | ~$28 (4 weekly batches) | **~$128** |
+| 100,000 images/month | ~$1,000 | ~$28 (4 weekly batches) | **~$1,028** |
+
+This gives Nova-level costs with L1-grade timestamp anchoring for the entire batch. Individual duplicate detection and key validity checks still run on Nova.
 
 ## References
 
@@ -1135,7 +1252,10 @@ For very high volumes, a hybrid approach using off-chain attestations with perio
 - [ERC-5192: Minimal Soulbound NFTs](https://eips.ethereum.org/EIPS/eip-5192) -- Evaluated, not used
 - [EIP-712: Typed Structured Data](https://eips.ethereum.org/EIPS/eip-712) -- Used by EAS for off-chain attestations
 - [EIP-4844: Shard Blob Transactions](https://eips.ethereum.org/EIPS/eip-4844) -- Future optimization
-- [Base](https://base.org) -- Recommended L2 deployment target
+- [Base](https://base.org) -- L2 deployment target (full rollup, Coinbase)
+- [Optimism](https://optimism.io) -- L2 deployment target (full rollup, Optimism Collective)
+- [Arbitrum Nova](https://nova.arbitrum.io) -- L2 deployment target (AnyTrust, cheapest)
+- [Arbitrum One](https://arbitrum.io) -- L2 deployment target (full rollup, Offchain Labs)
 - [IPFS](https://ipfs.io) -- Off-chain storage for thumbnails, EXIF, metadata
 - [Storacha](https://storacha.network) (formerly web3.storage) -- Decentralized hot storage on IPFS/Filecoin
 - [Filebase](https://filebase.com) -- S3-compatible IPFS/Filecoin pinning
