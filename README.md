@@ -22,8 +22,35 @@ The signature is embedded steganographically in the image. The receiver extracts
 | [BLS/](BLS/) | BLS (BN-P158) | 264-352 bits (pHash + sig, no PK) | ~78 bits | No | Working prototype |
 | [BLS/](BLS/) | BLS (BLS12-381) | 488-576 bits (pHash + sig, no PK) | ~117-120 bits | No | Working prototype |
 
+## Unified API
+
+The [unified/](unified/) directory provides a **scheme-agnostic API** (`stego_sig.h`) that abstracts over all signature schemes. A single `stego_demo.c` works identically with any backend:
+
+```bash
+cd unified
+make test SCHEME=uov-80       # Post-quantum, 400-bit payload
+make test SCHEME=bls-bn158    # Classical, 264-352 bit payload
+```
+
+### Payload sizes (bits, without PK)
+
+| pHash | UOV-80 | UOV-100 | BLS-BN158 | BLS12-381 |
+|---|---|---|---|---|
+| 96-bit | 400 | 504 | **264** | 488 |
+| 144-bit | 400 | 504 | **312** | 536 |
+| 184-bit | 400 | 504 | **352** | 576 |
+
+### Payload sizes (bits, with PK in-band)
+
+| pHash | UOV-80 | UOV-100 | BLS-BN158 | BLS12-381 |
+|---|---|---|---|---|
+| 96-bit | 204,400 | 403,704 | **592** | 1,264 |
+| 144-bit | 204,400 | 403,704 | **640** | 1,312 |
+| 184-bit | 204,400 | 403,704 | **680** | 1,352 |
+
 ## Documentation
 
+- [Unified API](unified/) -- Scheme-agnostic signature API with payload size tables
 - [UOV Implementation](UOV/) -- Post-quantum signatures with message recovery
 - [BLS Implementation](BLS/) -- Classical BLS signatures (BN-P158 and BLS12-381)
 - [Scheme Comparison](docs/scheme-comparison.md) -- Analysis of all PQC signature candidates considered
