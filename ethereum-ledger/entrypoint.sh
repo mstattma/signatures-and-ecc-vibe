@@ -30,6 +30,14 @@ if [ -d /host ]; then
     echo "deployment.json exported to host" || true
 fi
 
+# Copy deployment.json and artifacts to shared volume for the UI container
+if [ -d /shared ]; then
+  cp deployment.json /shared/deployment.json 2>/dev/null && \
+    echo "deployment.json exported to shared volume"
+  cp -r artifacts /shared/artifacts 2>/dev/null && \
+    echo "artifacts exported to shared volume"
+fi
+
 echo ""
 echo "=== Hardhat Node Running ==="
 echo "RPC: http://localhost:8545 (from host)"

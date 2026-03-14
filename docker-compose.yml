@@ -1,18 +1,19 @@
-# Docker Compose for local development
+# Docker Compose: Hardhat node + Scaffold-ETH 2 UI
 #
 # Usage:
-#   docker compose up              # Start Hardhat node + auto-deploy contracts
+#   docker compose up              # Start node + UI
 #   docker compose up -d           # Start in background
-#   docker compose logs -f node    # Follow node logs
+#   docker compose logs -f         # Follow all logs
+#   docker compose logs -f node    # Follow node logs only
+#   docker compose logs -f ui      # Follow UI logs only
 #   docker compose down            # Stop everything
 #
-# The Hardhat node is available at http://localhost:8545
-# Contracts are auto-deployed on startup.
-# deployment.json is written to ethereum-ledger/deployment.json on the host.
+# Services:
+#   node: Hardhat node on http://localhost:8545 (auto-deploys contracts)
+#   ui:   Scaffold-ETH 2 on http://localhost:3000 (auto-generates contract ABIs)
 #
-# Run scripts against the running node:
-#   cd ethereum-ledger
-#   npx hardhat run scripts/demo.js --network localhost
+# The UI waits for the node to deploy contracts, then generates
+# externalContracts.ts from the deployment and starts Next.js.
 
 services:
   node:
@@ -22,11 +23,32 @@ services:
     ports:
       - "8545:8545"
     volumes:
-      # Mount the scripts dir so deployment.json is written to the host
+      # Sync deployment.json back to host
       - ./ethereum-ledger:/host
+      # Share deployment data with the UI container
+      - shared-data:/shared
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:8545', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',method:'eth_blockNumber',params:[],id:1})}).then(r=>r.json()).then(d=>{if(d.result)process.exit(0);process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 5s
       timeout: 3s
       retries: 10
       start_period: 15s
+
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      # Read deployment data from the node container
+      - shared-data:/shared:ro
+    depends_on:
+      node:
+        condition: service_healthy
+    environment:
+      # Tell Next.js to bind to all interfaces
+      - HOSTNAME=0.0.0.0
+
+volumes:
+  shared-data:

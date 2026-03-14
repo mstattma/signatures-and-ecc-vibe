@@ -207,13 +207,33 @@ Available `SIMULATE_NETWORK` values: `base`, `optimism`, `arbitrumNova`, `l1`, `
 
 ## Web UI (Scaffold-ETH 2)
 
-A [Scaffold-ETH 2](https://scaffoldeth.io/) UI is available in the `ui/` directory at the project root. It provides auto-generated interactive pages for all contracts (read/write every function, wallet connection, event logs).
+A [Scaffold-ETH 2](https://scaffoldeth.io/) UI is included in the `ui/` directory at the project root. It provides auto-generated interactive pages for all contracts (read/write every function, wallet connection, event logs).
 
-### Setup
+The UI is fully containerized — `docker compose up` starts both the Hardhat node and the UI:
+
+```bash
+# From the project root:
+docker compose up -d           # Starts node (port 8545) + UI (port 3000)
+docker compose logs -f         # Follow all logs
+```
+
+Open **http://localhost:3000/debug** to interact with the contracts. The debug page shows:
+- **KeyRegistry**: register/rotate/revoke keys, query validity
+- **CrossChainBloomFilter**: add entries, check duplicates, view filter state
+
+The UI container automatically:
+1. Waits for the node container to be healthy (contracts deployed)
+2. Reads `deployment.json` and contract artifacts from a shared volume
+3. Generates `externalContracts.ts` with the correct addresses and ABIs
+4. Starts the Next.js dev server
+
+### Manual UI setup (without Docker)
+
+If you prefer to run the UI outside Docker:
 
 ```bash
 # 1. Start the Hardhat node (Docker or manual)
-docker compose up -d
+docker compose up -d node      # only the node container
 
 # 2. Export contract ABIs to the UI
 cd ethereum-ledger
@@ -225,16 +245,16 @@ yarn install
 yarn workspace @se-2/nextjs dev
 ```
 
-Open `http://localhost:3000/debug` to interact with the contracts. The debug page shows:
-- **KeyRegistry**: register/rotate/revoke keys, query validity
-- **CrossChainBloomFilter**: add entries, check duplicates, view filter state
-
-The UI connects to `http://localhost:8545` (the Hardhat node from Docker or manual startup) and uses a burner wallet for local testing.
-
 ### Updating contract ABIs
 
-After redeploying contracts (e.g., after modifying Solidity code):
+After modifying Solidity contracts, rebuild the node container:
 
+```bash
+docker compose build node
+docker compose up -d           # Redeploys contracts and regenerates ABIs in UI
+```
+
+Or manually:
 ```bash
 cd ethereum-ledger
 npx hardhat compile
