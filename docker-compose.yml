@@ -43,6 +43,10 @@ services:
     volumes:
       # Read deployment data from the node container
       - shared-data:/shared:ro
+      # Persist Next.js compilation cache across container restarts
+      # Avoids ~40s first-page compile on every restart
+      # Invalidated automatically by Next.js when source files change
+      - nextjs-cache:/app/packages/nextjs/.next
     depends_on:
       node:
         condition: service_healthy
@@ -52,3 +56,4 @@ services:
 
 volumes:
   shared-data:
+  nextjs-cache:
