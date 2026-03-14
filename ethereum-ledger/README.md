@@ -120,3 +120,28 @@ ethereum-ledger/
 | **Testnet** | `--network baseSepolia` | On-chain (permanent) | Yes (via deployment.json or env) | Integration testing, production |
 
 **Note:** The persistent node (`npx hardhat node`) keeps state in memory only. When you stop the node, all deployed contracts and state are lost. For permanent persistence, deploy to a testnet. If the demo detects stale addresses (contracts not found at deployment.json addresses), it falls back to a fresh ephemeral deployment automatically.
+
+## Gas Cost Estimation
+
+The demo prints USD cost estimates alongside every gas usage figure. The network is auto-detected from the chainId and the corresponding gas price is used:
+
+| Network | ChainId | Gas price (gwei) | Example: 200K gas | Notes |
+|---|---|---|---|---|
+| **Base** | 8453 | 0.01 | ~$0.006 | Optimistic rollup (OP Stack), Coinbase |
+| **Base Sepolia** | 84532 | 0.01 | ~$0.006 | Testnet |
+| **Optimism** | 10 | 0.01 | ~$0.006 | Optimistic rollup (OP Stack) |
+| **Arbitrum Nova** | 42170 | 0.002 | ~$0.0012 | AnyTrust (DAC), cheapest |
+| **Ethereum L1** | 1 | 30 | ~$18.00 | Mainnet; too expensive for per-image use |
+| **localhost / hardhat** | 31337 | 0.01 | ~$0.006 | Local testing; uses Base-equivalent pricing |
+
+Default ETH price: **$3,000**. Override with environment variables:
+
+```bash
+# Custom ETH price
+ETH_PRICE_USD=2500 npx hardhat run scripts/demo.js --network localhost
+
+# Example output:
+#   Key registered! 200353 gas (~$0.0050 on localhost (Base-equivalent) at ETH=$2500)
+```
+
+**Note on L2 gas pricing:** The gas prices above are approximate effective rates that include both L2 execution cost and the amortized L1 data posting fee (which L2s charge as part of the L2 gas price). Actual costs vary with L1 gas prices and network congestion. Arbitrum Nova is 5-10x cheaper than Base/Optimism because it uses a Data Availability Committee (DAC) instead of posting all data to L1.
