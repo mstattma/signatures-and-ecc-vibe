@@ -123,7 +123,9 @@ Transaction data is NOT posted to L1. Instead, the DAC signs a data availability
 
 2. **IPFS is shared.** The metadataCID stored on-chain points to the same IPFS content regardless of which chain the attestation is on. A verifier on any chain can fetch the same IPFS data.
 
-3. **Duplicate detection is per-chain.** The `(pHash, salt)` uniqueness constraint is enforced per-chain by each chain's resolver. If a user registers on both Base and Nova, that's two separate registrations (same image, two chains). This is by design — the user may want redundancy.
+3. **Duplicate detection is cross-chain.** Two layers work together to prevent the same `(pHash, salt)` from being registered on any chain (see [Cross-Chain Duplicate Detection](#cross-chain-duplicate-detection)):
+   - **Primary (fast path):** An off-chain indexer monitors all chains and checks for duplicates before registration. Sub-second latency, trusts the indexer service.
+   - **Secondary (trustless):** A Bloom filter of all `(pHash, salt)` commitments is synchronized across chains. False positives cause a salt retry (harmless); false negatives are not possible with proper sizing.
 
 4. **Reputation is per-chain.** Each chain has its own ReputationRegistry. Cross-chain reputation aggregation is a future enhancement (via cross-chain messaging or an off-chain indexer that reads all chains).
 
@@ -311,6 +313,182 @@ contract ImageAuthResolver is SchemaResolver {
 ```
 
 **Gas cost of the resolver**: Adds ~65,000-85,000 gas: two SSTORE operations for indexes (20,000 each), one SLOAD + external call for key validity check (~5,000), one external call to reputation registry (~25,000 including the SSTORE for imageCount). This is a one-time cost per registration, and the indexes enable O(1) on-chain lookups.
+
+### Cross-Chain Duplicate Detection
+
+The per-chain resolver enforces `(pHash, salt)` uniqueness on its own chain. To prevent the same `(pHash, salt)` from being registered on a different chain, two complementary layers provide cross-chain deduplication.
+
+#### Layer 1: Off-chain indexer (fast path)
+
+An off-chain indexer service monitors events from all deployed chains and maintains a unified `(pHash, salt)` index. The client queries this indexer before any on-chain registration.
+
+```
+Registration flow with indexer:
+
+1. Client computes (pHash, salt) for new image
+2. Client queries indexer: "Does keccak256(pHash || salt) exist on ANY chain?"
+   └── Indexer checks unified index (Base + Optimism + Nova + ...)
+   └── Response in <100ms
+3a. "Not found" → proceed with on-chain registration on chosen chain
+3b. "Found on Base, attestation UID=0x..." → reject (or retry with new salt)
+```
+
+| Property | Value |
+|---|---|
+| Latency | <100 ms |
+| Gas cost | 0 (off-chain query) |
+| Trust model | Trust the indexer service (operated by us) |
+| Failure mode | If indexer is wrong (allows duplicate): two registrations exist; detectable and correctable post-hoc |
+| Implementation | The Graph subgraph or custom indexer reading events from all chains |
+
+The indexer is **auditable**: anyone can independently verify its correctness by replaying events from all chains and reconstructing the index. Discrepancies can be flagged.
+
+#### Layer 2: On-chain Bloom filter (trustless, cross-chain)
+
+Each chain maintains an on-chain Bloom filter of all `keccak256(pHash || salt)` values registered across ALL chains. The Bloom filters are periodically synchronized: each chain publishes its new entries, and all chains absorb entries from the others.
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.19;
+
+contract CrossChainBloomFilter {
+    // Bloom filter: 2048 bytes = 16384 bits
+    // Optimal for ~5000 entries with <1% false positive rate
+    // Can be resized by deploying a new contract with a larger filter
+    uint256 constant BLOOM_SIZE_BITS = 16384;
+    uint256 constant BLOOM_SIZE_WORDS = BLOOM_SIZE_BITS / 256; // 64 words
+    uint256 constant NUM_HASHES = 10; // Number of hash functions
+
+    uint256[64] public bloomFilter;
+    uint256 public entryCount;
+
+    event BloomUpdated(bytes32 indexed pHashSaltKey);
+    event BloomSynced(uint256 newEntries, bytes32 sourceChainId);
+
+    /// @notice Add a (pHash, salt) commitment to the Bloom filter.
+    ///         Called by the resolver after a successful registration.
+    function add(bytes32 pHashSaltKey) external {
+        for (uint256 i = 0; i < NUM_HASHES; i++) {
+            uint256 bit = uint256(keccak256(abi.encodePacked(pHashSaltKey, i))) % BLOOM_SIZE_BITS;
+            uint256 wordIdx = bit / 256;
+            uint256 bitIdx = bit % 256;
+            bloomFilter[wordIdx] |= (1 << bitIdx);
+        }
+        entryCount++;
+        emit BloomUpdated(pHashSaltKey);
+    }
+
+    /// @notice Check if a (pHash, salt) commitment MIGHT exist.
+    ///         Returns true if all bits are set (possible match or false positive).
+    ///         Returns false if any bit is unset (definitely not present).
+    function mightContain(bytes32 pHashSaltKey) external view returns (bool) {
+        for (uint256 i = 0; i < NUM_HASHES; i++) {
+            uint256 bit = uint256(keccak256(abi.encodePacked(pHashSaltKey, i))) % BLOOM_SIZE_BITS;
+            uint256 wordIdx = bit / 256;
+            uint256 bitIdx = bit % 256;
+            if (bloomFilter[wordIdx] & (1 << bitIdx) == 0) {
+                return false; // Definitely not present
+            }
+        }
+        return true; // Might be present (or false positive)
+    }
+
+    /// @notice Sync entries from another chain's Bloom filter.
+    ///         Called by an authorized relayer with a batch of new entries.
+    function syncFromChain(bytes32[] calldata pHashSaltKeys, bytes32 sourceChainId) external {
+        for (uint256 i = 0; i < pHashSaltKeys.length; i++) {
+            // Add each entry to the local Bloom filter
+            bytes32 key = pHashSaltKeys[i];
+            for (uint256 j = 0; j < NUM_HASHES; j++) {
+                uint256 bit = uint256(keccak256(abi.encodePacked(key, j))) % BLOOM_SIZE_BITS;
+                uint256 wordIdx = bit / 256;
+                uint256 bitIdx = bit % 256;
+                bloomFilter[wordIdx] |= (1 << bitIdx);
+            }
+        }
+        entryCount += pHashSaltKeys.length;
+        emit BloomSynced(pHashSaltKeys.length, sourceChainId);
+    }
+}
+```
+
+**Registration flow with Bloom filter:**
+
+```
+1. Client computes pHashSaltKey = keccak256(pHash || salt)
+2. Client calls bloomFilter.mightContain(pHashSaltKey) on target chain
+3a. Returns false → definitely unique cross-chain → proceed with registration
+3b. Returns true → MIGHT be duplicate (or false positive)
+    └── Retry with new salt: salt' = salt + 1, recompute pHashSaltKey, go to step 2
+    └── Retries are cheap (just a view call) and fast
+    └── Expected retries: <1% false positive rate → ~1 retry per 100 registrations
+```
+
+**Bloom filter parameters:**
+
+| Parameter | Value | Notes |
+|---|---|---|
+| Filter size | 2,048 bytes (16,384 bits) | Stored in 64 `uint256` words on-chain |
+| Hash functions | 10 | Optimal for target capacity / FP rate |
+| Capacity | ~5,000 entries at <1% FP rate | Per filter instance |
+| Capacity | ~10,000 entries at ~5% FP rate | Graceful degradation |
+| False positive consequence | Salt retry (harmless) | Client generates new salt and retries |
+| False negative rate | **0%** (guaranteed) | If entry was added, it will be detected |
+| Storage gas (initial deploy) | ~1,300,000 (64 SSTORE) | One-time; ~$1.30 on L2 |
+| `add()` gas | ~50,000-80,000 (10 SSTORE updates) | Per registration; amortized via resolver |
+| `mightContain()` gas | ~5,000-10,000 (10 SLOAD) | Free (view function) |
+| `syncFromChain()` gas | ~50,000 per 10 entries | Batch sync from other chains |
+
+**Scaling**: When the filter approaches capacity, deploy a new contract with a larger filter (e.g., 8,192 bytes for ~20,000 entries at <1% FP). The old filter is kept for reads; new writes go to the new filter. Queries check both filters (OR logic).
+
+**Sync mechanism**: A relayer service (operated by us, but verifiable) periodically reads new `BloomUpdated` events from each chain and calls `syncFromChain()` on all other chains. Sync frequency is configurable — every few minutes is sufficient since the off-chain indexer handles the fast path.
+
+| Sync frequency | Sync gas per chain | Monthly cost (3 chains, 1000 images/month) |
+|---|---|---|
+| Every 10 minutes | ~5,000 per sync (if no new entries) | ~$2-5 |
+| Every hour | ~50,000 per sync (batch of ~10 entries) | ~$0.50-1 |
+| Every 6 hours | ~100,000 per sync (batch of ~50 entries) | ~$0.10-0.20 |
+
+#### Combined cross-chain dedup flow
+
+```
+Client wants to register image on Arbitrum Nova:
+
+1. Fast path: query off-chain indexer (all chains)
+   ├── "Not found" → continue to step 2
+   └── "Found" → reject or retry with new salt
+
+2. Trustless check: call bloomFilter.mightContain() on Nova
+   ├── false → definitely unique → proceed
+   └── true → possible duplicate or false positive
+       └── Retry with new salt (go to step 1)
+
+3. Register on Nova (resolver also calls bloomFilter.add())
+
+4. Background: relayer syncs Nova's new Bloom entry to Base and Optimism
+```
+
+**Why both layers?**
+
+| Scenario | Indexer | Bloom filter |
+|---|---|---|
+| Normal operation | Handles 99%+ of dedup checks instantly | Serves as trustless fallback |
+| Indexer down | Unavailable | Bloom filter still works (on-chain) |
+| Indexer lies (allows dup) | Duplicate passes fast path | Bloom filter catches it at step 2 |
+| Bloom false positive | N/A (indexer gave definitive answer) | Client retries with new salt (harmless) |
+| Cross-chain race condition | Indexer may have stale data | Bloom sync lag (~minutes) is similar; per-chain resolver is final authority |
+
+The two layers are complementary: the indexer is fast and definitive but trusted; the Bloom filter is trustless but probabilistic and slightly delayed. Together they provide both speed and integrity.
+
+#### Security aspect: perceptual hash collisions
+
+Cross-chain duplicate detection has a security dimension beyond convenience. Because perceptual hashes are similarity-based (not cryptographic), hash collisions between visually different images are possible — especially for shorter hashes (96 bits: ~2^48 collision resistance). The duplicate detection system prevents an attacker from:
+
+1. **Collision exploitation**: Finding two different images with the same pHash and registering both (one legitimate, one malicious)
+2. **Cross-chain forgery**: Registering a legitimate image on Base, then registering a different image with the same pHash on Nova to create confusion
+3. **Reputation farming**: Registering the same image across multiple chains to inflate image count
+
+The `(pHash, salt)` uniqueness constraint, enforced cross-chain, ensures that each pHash-salt combination is globally unique. If an attacker finds a pHash collision, they can only register it once (with one salt) across all chains. Subsequent attempts with the same pHash require a different salt, creating a detectable audit trail.
 
 ### Signature-Based Lookup
 
@@ -501,12 +679,15 @@ This prevents an attacker who compromises an old (revoked) key from creating new
 
 | Operation | Gas (L2) | Cost on Base (~$0.001/1000 gas) | Notes |
 |---|---|---|---|
-| Schema registration | ~250,000 | ~$0.25 | One-time, per schema (need 4 schemas) |
+| Schema registration | ~250,000 | ~$0.25 | One-time, per schema (need 4+ schemas) |
 | Resolver deployment | ~800,000 | ~$0.80 | One-time |
 | KeyRegistry deployment | ~600,000 | ~$0.60 | One-time |
 | ReputationRegistry deployment | ~1,200,000 | ~$1.20 | One-time |
+| BloomFilter deployment | ~1,300,000 | ~$1.30 | One-time per chain; 64 SSTORE for filter |
 | Key registration/rotation | ~120,000-140,000 | ~$0.12-0.14 | Per key rotation |
-| Image attestation (with resolver) | ~130,000-170,000 | ~$0.13-0.17 | Per image, includes indexes + key check + reputation |
+| Image attestation (with resolver + Bloom) | ~180,000-250,000 | ~$0.18-0.25 | Per image; includes indexes + key check + reputation + Bloom add |
+| Bloom filter check | ~5,000-10,000 | Free (view) | Per pre-registration dedup check |
+| Bloom cross-chain sync | ~50,000 per 10 entries | ~$0.005/entry | Periodic batch sync from other chains |
 | Rate a user | ~50,000 | ~$0.05 | One-time per (rater, user) pair |
 | Rate an image | ~60,000 | ~$0.06 | One-time per (rater, image) pair |
 | Submit user metadata | ~25,000 | ~$0.025 | Per metadata item |
@@ -514,9 +695,11 @@ This prevents an attacker who compromises an old (revoked) key from creating new
 | Get reputation score | ~10,000 | Free (view) | Per query |
 | Revoke attestation | ~30,000 | ~$0.03 | For key compromise |
 
-**Estimated cost per image registration: $0.13-0.17 on Base/Optimism.** This includes the resolver's duplicate detection, key validity check, signature-prefix indexing, and reputation registry notification.
+**Estimated cost per image registration: $0.18-0.25 on Base/Optimism** (fully on-chain with Bloom filter). With hybrid registration (LightRegistration + Bloom): ~$0.10-0.15. This includes the resolver's duplicate detection, Bloom filter update, key validity check, signature-prefix indexing, and reputation registry notification.
 
-**One-time deployment cost: ~$3.85** for all contracts and schemas.
+**One-time deployment cost: ~$5.15 per chain** for all contracts and schemas. For 3 chains: ~$15.45 total.
+
+**Cross-chain Bloom sync overhead: ~$0.50-5/month** depending on volume and sync frequency.
 
 ### Batch Optimization
 
@@ -1145,15 +1328,15 @@ The smart contracts themselves are open-source and permissionless — anyone can
 
 ## Implementation Roadmap
 
-### Phase 1: Core Contracts and Schema
+### Phase 1: Core Contracts and Schema (single chain)
 
-- Deploy `KeyRegistry` contract on Base Sepolia (testnet)
+- Deploy `KeyRegistry`, `CrossChainBloomFilter` on Base Sepolia (testnet)
 - Register the EAS image authentication schema
-- Deploy `ImageAuthResolver` with duplicate detection and signature-prefix indexing
-- Integrate resolver with `ReputationRegistry.onImageRegistered()`
+- Deploy `ImageAuthResolver` with duplicate detection, Bloom filter, and signature-prefix indexing
+- Integrate resolver with `ReputationRegistry.onImageRegistered()` and Bloom filter
 - Test key registration, rotation, revocation, and validity checks
-- Test duplicate detection and signature-prefix lookup
-- Estimated effort: 3-5 days
+- Test duplicate detection (per-chain + Bloom) and signature-prefix lookup
+- Estimated effort: 4-6 days
 
 ### Phase 2: Reputation System
 
@@ -1163,24 +1346,34 @@ The smart contracts themselves are open-source and permissionless — anyone can
 - Test scoring weights and edge cases
 - Estimated effort: 2-3 days
 
-### Phase 3: Client Integration
+### Phase 3: Multi-Chain Deployment and Cross-Chain Dedup
+
+- Deploy all contracts to Optimism Sepolia and Arbitrum Nova (testnet)
+- Build off-chain indexer for cross-chain `(pHash, salt)` deduplication
+- Implement Bloom filter sync relayer (periodic cross-chain sync)
+- Test cross-chain duplicate detection: indexer fast path + Bloom fallback
+- Test salt retry on Bloom false positives
+- Estimated effort: 5-7 days
+
+### Phase 4: Client Integration
 
 - Extend the unified API (`stego_sig.h`) with key registration and image registration steps
 - Implement IPFS metadata upload (AVIF thumbnail, EXIF)
 - Implement EAS attestation creation via the EAS SDK
-- Add pre-registration duplicate check and key validity check
+- Add pre-registration duplicate check (indexer + Bloom) and key validity check
+- Implement chain selection in client SDK
 - Integrate key rotation workflow into the signing flow
 - Estimated effort: 5-7 days
 
-### Phase 4: Verifier
+### Phase 5: Verifier
 
-- Implement signature-prefix lookup via EAS GraphQL
+- Implement signature-prefix lookup via EAS GraphQL (multi-chain)
 - Integrate PK retrieval, key validity check, and signature verification
 - Add file hash comparison and reputation score display
-- Build a verification CLI/web tool
+- Build a verification CLI/web tool with chain auto-detection
 - Estimated effort: 3-5 days
 
-### Phase 5: Metadata Verification Services
+### Phase 6: Metadata Verification Services
 
 - Implement email verification oracle (DKIM proof)
 - Implement domain verification (DNS TXT / `.well-known`)
@@ -1188,13 +1381,14 @@ The smart contracts themselves are open-source and permissionless — anyone can
 - Connect to reputation scoring
 - Estimated effort: 5-7 days
 
-### Phase 6: Production Deployment
+### Phase 7: Production Deployment
 
-- Deploy all contracts to Base mainnet (or Optimism)
-- Register production schemas
-- Audit all contracts (KeyRegistry, ReputationRegistry, ImageAuthResolver)
+- Deploy all contracts to Base, Optimism, and Arbitrum Nova mainnets
+- Register production schemas on all chains
+- Audit all contracts (KeyRegistry, ReputationRegistry, ImageAuthResolver, CrossChainBloomFilter)
 - Set up IPFS pinning (Storacha or Filebase)
-- Estimated effort: 2-3 days
+- Deploy off-chain indexer and Bloom sync relayer to production
+- Estimated effort: 3-5 days
 
 ## Cost Projections
 
