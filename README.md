@@ -33,7 +33,7 @@ make test SCHEME=uov-80       # Post-quantum, 400-bit payload
 make test SCHEME=bls-bn158    # Classical, 264-352 bit payload
 ```
 
-### Payload sizes (bits, without PK)
+### Payload sizes (bits, pHash embedded, no PK)
 
 | pHash | UOV-80 (max 144b) | UOV-100 (max 184b) | BLS-BN158 | BLS12-381 |
 |---|---|---|---|---|
@@ -41,9 +41,17 @@ make test SCHEME=bls-bn158    # Classical, 264-352 bit payload
 | 144-bit | 400 | 504 | **328** | 552 |
 | 184-bit | N/A (rejected) | 504 | **368** | 592 |
 
-> **Note:** All schemes include a 2-byte (16-bit) salt by default. For UOV the salt is embedded in the recovered digest (zero extra payload). For BLS the salt is transmitted explicitly in the payload: `pHash || salt || sig`. UOV-80 can sign pHashes up to **144 bits** (18 bytes); larger pHashes are rejected. Use UOV-100 (max 184 bits) or BLS for larger pHashes.
+### Payload sizes (bits, pHash NOT embedded, no PK)
 
-### Payload sizes (bits, with PK in-band)
+For BLS, the pHash can be omitted from the payload (e.g., looked up from a ledger by signature). The payload then contains only the salt and signature.
+
+| pHash | UOV-80 | UOV-100 | BLS-BN158 | BLS12-381 |
+|---|---|---|---|---|
+| any | 400 (msg recovery) | 504 (msg recovery) | **184** | **408** |
+
+> **Note:** All schemes include a 2-byte (16-bit) salt. For UOV the salt is embedded in the recovered digest (zero extra payload). For BLS the salt is always transmitted in the payload. UOV-80 can sign pHashes up to **144 bits** (18 bytes); larger pHashes are rejected. Use UOV-100 (max 184 bits) or BLS for larger pHashes.
+
+### Payload sizes (bits, pHash embedded, with PK in-band)
 
 | pHash | UOV-80 (max 144b) | UOV-100 (max 184b) | BLS-BN158 | BLS12-381 |
 |---|---|---|---|---|
