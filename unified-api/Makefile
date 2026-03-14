@@ -9,6 +9,9 @@
 #   make clean
 
 CC ?= gcc
+# Note: -O1 instead of -O2 due to a RELIC crash with BLS12-381 at -O2.
+# RELIC's core_init triggers a stack smash at -O2 in the BLS12-381 build.
+# BN-158 and UOV work fine at -O2. This appears to be a RELIC/compiler interaction bug.
 CFLAGS = -O1 -Wall -Wextra -std=c99
 
 SCHEME ?= bls-bn158
