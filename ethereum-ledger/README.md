@@ -204,3 +204,39 @@ SIMULATE_NETWORK=optimism npx hardhat run scripts/demo.js --network localhost
 Available `SIMULATE_NETWORK` values: `base`, `optimism`, `arbitrumNova`, `l1`, `baseSepolia`, `localhost`.
 
 **Note on L2 gas pricing:** The gas prices above are approximate effective rates that include both L2 execution cost and the amortized L1 data posting fee (which L2s charge as part of the L2 gas price). Actual costs vary with L1 gas prices and network congestion. Arbitrum Nova is 5-10x cheaper than Base/Optimism because it uses a Data Availability Committee (DAC) instead of posting all data to L1.
+
+## Web UI (Scaffold-ETH 2)
+
+A [Scaffold-ETH 2](https://scaffoldeth.io/) UI is available in the `ui/` directory at the project root. It provides auto-generated interactive pages for all contracts (read/write every function, wallet connection, event logs).
+
+### Setup
+
+```bash
+# 1. Start the Hardhat node (Docker or manual)
+docker compose up -d
+
+# 2. Export contract ABIs to the UI
+cd ethereum-ledger
+node scripts/export-abis.js
+
+# 3. Install UI dependencies and start
+cd ../ui
+yarn install
+yarn workspace @se-2/nextjs dev
+```
+
+Open `http://localhost:3000/debug` to interact with the contracts. The debug page shows:
+- **KeyRegistry**: register/rotate/revoke keys, query validity
+- **CrossChainBloomFilter**: add entries, check duplicates, view filter state
+
+The UI connects to `http://localhost:8545` (the Hardhat node from Docker or manual startup) and uses a burner wallet for local testing.
+
+### Updating contract ABIs
+
+After redeploying contracts (e.g., after modifying Solidity code):
+
+```bash
+cd ethereum-ledger
+npx hardhat compile
+node scripts/export-abis.js    # Regenerates ui/packages/nextjs/contracts/externalContracts.ts
+```
