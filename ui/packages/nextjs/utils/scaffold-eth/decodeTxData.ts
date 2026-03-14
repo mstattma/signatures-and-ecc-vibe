@@ -3,18 +3,32 @@ import { GenericContractsDeclaration } from "./contract";
 import { Abi, AbiFunction, decodeFunctionData, getAbiItem } from "viem";
 import { hardhat } from "viem/chains";
 import contractData from "~~/contracts/deployedContracts";
+import externalContractData from "~~/contracts/externalContracts";
 
 type ContractsInterfaces = Record<string, Abi>;
 type TransactionType = TransactionWithFunction | null;
 
+// Merge deployed + external contract ABIs for transaction decoding
 const deployedContracts = contractData as GenericContractsDeclaration | null;
-const chainMetaData = deployedContracts?.[hardhat.id];
-const interfaces = chainMetaData
-  ? Object.entries(chainMetaData).reduce((finalInterfacesObj, [contractName, contract]) => {
-      finalInterfacesObj[contractName] = contract.abi;
-      return finalInterfacesObj;
-    }, {} as ContractsInterfaces)
-  : {};
+const externalContracts = externalContractData as GenericContractsDeclaration | null;
+
+const interfaces: ContractsInterfaces = {};
+
+// Add deployed contracts
+const deployedChainData = deployedContracts?.[hardhat.id];
+if (deployedChainData) {
+  for (const [contractName, contract] of Object.entries(deployedChainData)) {
+    interfaces[contractName] = contract.abi;
+  }
+}
+
+// Add external contracts (our KeyRegistry, CrossChainBloomFilter, etc.)
+const externalChainData = externalContracts?.[hardhat.id];
+if (externalChainData) {
+  for (const [contractName, contract] of Object.entries(externalChainData)) {
+    interfaces[contractName] = contract.abi;
+  }
+}
 
 export const decodeTransactionData = (tx: TransactionWithFunction) => {
   if (tx.input.length >= 10 && !tx.input.startsWith("0x60e06040")) {
