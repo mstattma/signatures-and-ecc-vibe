@@ -19,11 +19,19 @@
 
 const { ethers } = require("hardhat");
 
-// Contract addresses (set after deployment, or via env)
-const KEY_REGISTRY = process.env.KEY_REGISTRY || "";
-const BLOOM_FILTER = process.env.BLOOM_FILTER || "";
-const RESOLVER = process.env.RESOLVER || "";
-const SCHEMA_UID = process.env.SCHEMA_UID || "";
+// Load contract addresses from deployment.json (written by deploy.js) or env
+const fs = require("fs");
+let deploymentAddrs = {};
+try {
+  deploymentAddrs = JSON.parse(fs.readFileSync("deployment.json", "utf8"));
+} catch (e) {
+  // No deployment.json -- will use env vars or deploy locally
+}
+
+const KEY_REGISTRY = process.env.KEY_REGISTRY || deploymentAddrs.keyRegistry || "";
+const BLOOM_FILTER = process.env.BLOOM_FILTER || deploymentAddrs.bloomFilter || "";
+const RESOLVER = process.env.RESOLVER || deploymentAddrs.resolver || "";
+const SCHEMA_UID = process.env.SCHEMA_UID || deploymentAddrs.schemaUID || "";
 const EAS_ADDRESS = "0x4200000000000000000000000000000000000021";
 
 // Simulated BLS-BN158 key pair and signature
