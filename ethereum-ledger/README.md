@@ -11,6 +11,9 @@ See [docs/ethereum-ledger-proposal.md](../docs/ethereum-ledger-proposal.md) for 
 | **KeyRegistry** | Signing key lifecycle (register, rotate, revoke, validity checks) | ~600K | ~140K (register), free (query) |
 | **CrossChainBloomFilter** | Cross-chain `(pHash, salt)` duplicate detection via Bloom filter | ~1.3M | ~270K (add), free (query) |
 | **ImageAuthResolver** | EAS resolver enforcing uniqueness, key validity, Bloom update, sig-prefix index | ~800K | ~200K (via EAS attest) |
+| **ReputationRegistry** | User/image reputation scoring (0-1000 points) | ~1.2M | ~50-60K (rate), free (score query) |
+
+The ReputationRegistry is defined in the [Ethereum Ledger Proposal](../docs/ethereum-ledger-proposal.md#reputation-system) but not yet deployed in the demo scripts (planned for Phase 2). The other three contracts are fully implemented and tested.
 
 ## Quick Start
 
@@ -226,6 +229,19 @@ The UI container automatically:
 2. Reads `deployment.json` and contract artifacts from a shared volume
 3. Generates `externalContracts.ts` with the correct addresses and ABIs
 4. Starts the Next.js dev server
+
+**Next.js cache persistence:** The `.next/` compilation cache is stored in a Docker volume (`nextjs-cache`) that survives container restarts. First page load takes ~40 seconds (full compilation); subsequent restarts serve pages in ~2-3 seconds. When contract ABIs change (new deployment), Next.js automatically recompiles only affected pages (~5-10 seconds). To force a full recompile: `docker volume rm signatures-and-ecc-vibe_nextjs-cache`.
+
+### Cross-chain duplicate detection
+
+The `CrossChainBloomFilter` contract provides trustless cross-chain `(pHash, salt)` deduplication. Each chain maintains a Bloom filter that is periodically synced from other chains by a relayer. A complementary off-chain indexer provides fast-path lookups across all chains.
+
+- **Bloom filter**: 2 KB (16,384 bits), 10 hash functions, ~5,000 entries at <1% false positive rate
+- **False positive**: causes a harmless salt retry (client picks a new salt and retries)
+- **False negative**: guaranteed impossible (if an entry was added, it will be detected)
+- **Sync**: relayer reads `BloomUpdated` events from each chain and calls `syncFromChain()` on all others
+
+See the [Ethereum Ledger Proposal](../docs/ethereum-ledger-proposal.md#cross-chain-duplicate-detection) for the full design, Solidity contract, and cost analysis.
 
 ### Manual UI setup (without Docker)
 

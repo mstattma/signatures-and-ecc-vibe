@@ -70,6 +70,31 @@ For BLS, the pHash can be omitted from the payload (e.g., looked up from a ledge
 - [Web UI](ui/) -- Scaffold-ETH 2 contract explorer (`docker compose up` → http://localhost:3000/debug)
 - [Video Extension](docs/video-extension.md) -- Merkle tree approach for authenticating video with per-interval tamper detection
 
+## Quick Start (Docker)
+
+The full stack (Hardhat blockchain node + Scaffold-ETH 2 UI) runs with a single command:
+
+```bash
+docker compose up -d             # Start node (port 8545) + UI (port 3000)
+docker compose logs -f           # Follow logs
+```
+
+- **http://localhost:3000/debug** -- Interactive contract explorer (KeyRegistry, BloomFilter)
+- **http://localhost:8545** -- JSON-RPC endpoint for scripts and wallets
+
+The node auto-deploys contracts on startup. The UI auto-generates contract ABIs from the deployment. Next.js compilation cache is persisted across restarts via a Docker volume (first load ~40s, subsequent loads ~2-3s).
+
+Run the E2E demo against the running node:
+```bash
+cd ethereum-ledger
+npx hardhat run scripts/demo.js --network localhost
+
+# Simulate Arbitrum Nova gas pricing:
+SIMULATE_NETWORK=arbitrumNova npx hardhat run scripts/demo.js --network localhost
+```
+
+See [ethereum-ledger/](ethereum-ledger/) for full setup options (Docker, manual, testnet).
+
 ## Architecture
 
 ### Stego Channel Pipeline
@@ -155,10 +180,11 @@ The stego signature provides in-image authentication, but a backend ledger enabl
 
 **Key rotation.** The stego signing keys (UOV or BLS) have limited security (80-120 bits) due to bandwidth constraints. These keys should be rotated frequently -- potentially per-session or per-batch. The blockchain transaction is signed with a separate, long-lived blockchain private key (e.g., ECDSA on secp256k1 or Ed25519) providing 128+ bit security. The ledger establishes ownership of all stego signing keys: the blockchain key is the identity anchor, and the stego keys are ephemeral.
 
-**Duplicate detection.** The ledger enforces a uniqueness constraint: the same `(pHash, salt)` pair cannot be registered twice. This prevents:
-- Re-signing a file that already has an embedded signature (the signing/embedding process should detect and reject this case)
-- Embedding a duplicate signature into a copy of a known file
-- The signing process must query the ledger before embedding and error out if a matching `(pHash, salt)` record already exists
+**Duplicate detection (cross-chain).** The same `(pHash, salt)` pair cannot be registered on any chain. Two layers enforce this:
+- **Off-chain indexer (fast path):** Monitors all chains, unified index, sub-second lookups. Trusted but auditable.
+- **On-chain Bloom filter (trustless):** Per-chain Bloom filter synced across chains. False positives cause a harmless salt retry. Zero false negatives guaranteed.
+
+The signing process queries both layers before embedding and errors out if a matching `(pHash, salt)` record already exists. This also prevents re-signing a file that already has an embedded signature.
 
 **Signature-based lookup.** The ledger must provide efficient lookup by signature value. Since signatures may be long (up to 504 bits for UOV-100), the index can use a truncated prefix of the signature (e.g., first 80-128 bits) for lookup, with full-length comparison for disambiguation. This enables the verifier to extract a signature from an image and immediately look up the corresponding ledger record.
 
@@ -186,6 +212,25 @@ The stego signature provides in-image authentication, but a backend ledger enabl
 - A reputation score (potentially computed from verification history, community feedback, or third-party attestation)
 
 This creates a trust chain: `blockchain identity ──► stego signing key ──► embedded signature ──► authenticated image`.
+
+**Key validity tracking.** The [KeyRegistry](ethereum-ledger/contracts/KeyRegistry.sol) contract tracks the lifecycle of each signing key with `activatedAt` and `revokedAt` timestamps. Registering a new key atomically revokes the previous one. The resolver verifies that a signing key was active at attestation time, preventing use of compromised/revoked keys for new content.
+
+**Reputation system.** The [ReputationRegistry](docs/ethereum-ledger-proposal.md#reputation-system) scores users (0-1000 points) based on account age, image count, community ratings (users + images), verified metadata (email, domain, organization), and key hygiene. See the [Ethereum Ledger Proposal](docs/ethereum-ledger-proposal.md) for the full contract and scoring weights.
+
+**Multi-chain deployment.** Contracts are deployed identically on multiple L2 chains. Users choose based on cost/trust preference:
+
+| Chain | Cost per image (hybrid) | Trust model |
+|---|---|---|
+| Base / Optimism | ~$0.07 | Full rollup (L1 data availability) |
+| Arbitrum Nova | ~$0.007-0.015 | AnyTrust DAC (mitigated by IPFS dual-write) |
+
+See the [Ethereum Ledger Proposal](docs/ethereum-ledger-proposal.md#chain-selection-multi-chain-deployment) for the full multi-chain architecture and Arbitrum Nova trust analysis.
+
+**Business model.** The smart contracts are open-source and permissionless. Revenue from premium reputation analytics, metadata verification oracles (email, domain), enterprise API, white-label deployments, and dispute resolution. See the [proposal](docs/ethereum-ledger-proposal.md#business-model-platform-services) for details.
+
+### Video Extension
+
+The architecture extends to video via a **Merkle tree of perceptual hashes**. A video has N pHashes (one per time interval); the Merkle root is signed once and embedded in the stego channel. The stego payload size is identical to still images. Individual intervals are independently verifiable via Merkle proofs. For live streaming, an incremental Merkle tree with periodic signing provides real-time verification at zero additional on-chain cost. See [docs/video-extension.md](docs/video-extension.md) for the full design.
 
 #### Threat Model with Ledger
 

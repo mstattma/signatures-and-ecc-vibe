@@ -175,9 +175,27 @@ This means the eavesdropper can see the pHash in cleartext (it's in the payload)
 
 ### Salt
 
-BLS signatures are inherently randomized through the hash-to-curve step (the mapping `H(message) -> G1` is deterministic, but different messages map to different points). Signing the same pHash twice with the same key produces the **same signature** (BLS is deterministic).
+BLS signatures are deterministic: signing the same pHash with the same key produces the same signature. A 2-byte (16-bit) random salt is included in every signature to ensure distinct signatures for the same pHash across different images. The BLS signature covers `pHash || salt`, and the salt is always transmitted in the payload.
 
-If distinct signatures per image are required (even for the same pHash), a salt or image-specific nonce should be prepended to the pHash before signing: `BLS_sign(sk, salt || pHash)`. The salt would then need to be included in the payload.
+**Payload format:** `[optional pHash] || [salt (2 bytes)] || [signature] || [optional PK]`
+
+The salt adds 16 bits to every payload. Payload sizes in the tables above include this salt.
+
+### Optional pHash embedding
+
+The [unified API](../unified-api/) supports an `embed_phash` flag for BLS:
+
+- **`embed_phash=1`** (default): Payload = `pHash || salt || signature`. Self-contained — the verifier has everything needed.
+- **`embed_phash=0`**: Payload = `salt || signature` only. The pHash is omitted and must be provided at verification time (e.g., from a ledger lookup by signature prefix).
+
+Without embedded pHash, the payload is constant-size regardless of pHash length:
+
+| Scheme | Payload (salt + sig only) | Notes |
+|---|---|---|
+| BN-P158 | **184 bits** (23 bytes) | Smallest authenticated payload of any scheme |
+| BLS12-381 | **408 bits** (51 bytes) | |
+
+This mode is designed for [ledger-backed verification](../docs/ethereum-ledger-proposal.md) where the pHash is stored on-chain and retrieved by the verifier. See the [unified API docs](../unified-api/README.md#optional-phash-embedding-bls) for the full API.
 
 ## References
 
