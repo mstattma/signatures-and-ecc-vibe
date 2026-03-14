@@ -16,11 +16,11 @@ The signature is embedded steganographically in the image. The receiver extracts
 
 ## Implementations
 
-| Directory | Scheme | Payload Size | Security | Quantum-safe | Status |
-|-----------|--------|-------------|----------|-------------|--------|
-| [UOV/](UOV/) | Oil and Vinegar | 400-504 bits (sig only, pHash recovered) | 80-100 bits | Yes | Working prototype |
-| [BLS/](BLS/) | BLS (BN-P158) | 264-352 bits (pHash + sig, no PK) | ~78 bits | No | Working prototype |
-| [BLS/](BLS/) | BLS (BLS12-381) | 488-576 bits (pHash + sig, no PK) | ~117-120 bits | No | Working prototype |
+| Directory | Scheme | Payload Size | Classical Security | Quantum Security | Status |
+|-----------|--------|-------------|-------------------|-----------------|--------|
+| [UOV/](UOV/) | Oil and Vinegar | 400-504 bits (sig only, pHash recovered) | 80-100 bits | ~40-60 bits (est.) | Working prototype |
+| [BLS/](BLS/) | BLS (BN-P158) | 264-352 bits (pHash + sig, no PK) | ~78 bits | 0 (broken by Shor) | Working prototype |
+| [BLS/](BLS/) | BLS (BLS12-381) | 488-576 bits (pHash + sig, no PK) | ~117-120 bits | 0 (broken by Shor) | Working prototype |
 
 ## Unified API
 
