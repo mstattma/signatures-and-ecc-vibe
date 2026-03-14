@@ -290,6 +290,118 @@ For maximum gas savings, EAS supports **off-chain attestations**: the attestatio
 
 For applications where a trusted timestamp is not critical, off-chain attestations reduce gas to zero. The attestation can be anchored on-chain later if needed.
 
+### Off-Chain Attestation Size
+
+An EAS off-chain attestation is an EIP-712 signed struct containing:
+
+| Field | Size | Notes |
+|---|---|---|
+| EIP-712 domain separator | 32 bytes | Cached, not stored per-attestation |
+| Schema UID | 32 bytes | |
+| Recipient | 20 bytes | Zero address if no recipient |
+| Time | 8 bytes | Signer-reported timestamp |
+| Expiration time | 8 bytes | 0 for no expiration |
+| Revocable | 1 byte | |
+| Reference UID | 32 bytes | 0 if no reference |
+| **Attestation data** | **137-266 bytes** | Our schema (variable by scheme) |
+| EIP-712 signature (v, r, s) | 65 bytes | ECDSA signature |
+| **Total** | **~303-432 bytes** | |
+
+Including JSON wrapping and hex encoding (EAS SDK stores off-chain attestations as JSON), the serialized off-chain attestation is approximately **~1.5-2.5 KB** per image.
+
+### Long-Term Persistent Storage Costs
+
+When using off-chain attestations, the attestation data must be stored somewhere durable. This section covers the cost of storing both the off-chain attestation and the associated metadata (thumbnail, EXIF) on various persistent storage providers.
+
+#### Data budget per image
+
+| Component | Size | Notes |
+|---|---|---|
+| Off-chain attestation (JSON) | ~1.5-2.5 KB | EIP-712 signed attestation with schema data |
+| Metadata JSON | ~0.5-2 KB | Filename, dimensions, EXIF, stego params |
+| Thumbnail (optional) | ~5-50 KB | Low-res JPEG |
+| **Total without thumbnail** | **~2-4.5 KB** | |
+| **Total with thumbnail** | **~7-55 KB** | |
+
+#### IPFS and trusted timestamps
+
+IPFS is a content-addressed protocol. CIDs are derived from the data content, not from when the data was added. **IPFS does not provide trusted timestamps natively.** Specifically:
+
+- IPFS nodes do not record or attest to when content was first pinned
+- Pinning services (Pinata, Storacha) may record upload timestamps in their internal databases and API responses, but these are **not cryptographically verifiable** and depend on trusting the service
+- The off-chain attestation's `time` field is self-reported by the signer (the signer's local clock) and is **not independently verified**
+
+To obtain a trusted timestamp, one of these approaches is needed:
+1. **On-chain anchoring** (~40,000 gas): Submit a minimal on-chain transaction containing `keccak256(off-chain attestation)`. The block timestamp provides a tamper-proof time reference. This is the "off-chain + on-chain timestamp" hybrid mode.
+2. **Timestamping authorities (TSA)**: Use an RFC 3161 timestamp from a trusted third party (e.g., DigiCert, FreeTSA). This adds ~1-4 KB to the stored data but provides a cryptographically verifiable timestamp without blockchain gas costs.
+3. **OpenTimestamps**: An open protocol that anchors timestamps in the Bitcoin blockchain. Free, but timestamps are batched and may take hours to confirm.
+
+#### Storage provider comparison
+
+Prices as of early 2026. All providers store data on IPFS and/or Filecoin.
+
+| Provider | Model | Free tier | Price | Trusted timestamp? | Notes |
+|---|---|---|---|---|---|
+| **Storacha** (formerly web3.storage) | Monthly subscription | 5 GB free | $0.15/GB/month (Mild); $0.05/GB/month (Medium, $10/mo for 100 GB) | No (upload timestamp in API only) | IPFS hot storage + Filecoin archival; best developer experience |
+| **Filebase** | Monthly subscription | 5 GB free | $0.009/GB/month (S3-compatible API) | No | Cheapest monthly; S3 interface makes integration easy |
+| **Filecoin direct** | One-time deal | N/A | ~$0.0001/GB/month equivalent | No | Cheapest long-term; higher retrieval latency (~minutes); requires deal-making |
+| **NFT.Storage** | One-time fee | N/A | $4.99/GB one-time | No | Endowment-backed long-term preservation; see note below |
+| **Self-hosted IPFS** | VPS cost | N/A | ~$5-20/month for a VPS (unlimited storage up to disk) | No (unless you add TSA) | Full control; requires maintenance; use `kubo` (Go-IPFS) |
+| **Pinata** | Monthly subscription | 1 GB / 500 files | $20/month for 50 GB (Pro) | No (upload timestamp in API) | Most popular; good API; dedicated gateways |
+
+#### Cost per image by provider
+
+Assuming ~25 KB average per image (attestation + metadata + small thumbnail):
+
+| Volume/month | Storacha (free tier) | Storacha ($10/mo) | Filebase (free) | Filebase (paid) | Filecoin direct | NFT.Storage | Self-hosted |
+|---|---|---|---|---|---|---|---|
+| 100 (2.5 MB) | **Free** | **Free** | **Free** | **Free** | ~$0.00 | $0.01 one-time | ~$5/mo VPS |
+| 1,000 (25 MB) | **Free** | **Free** | **Free** | **Free** | ~$0.00 | $0.12 one-time | ~$5/mo VPS |
+| 10,000 (250 MB) | **Free** | **Free** | **Free** | $0.002/mo | ~$0.00 | $1.22 one-time | ~$5/mo VPS |
+| 100,000 (2.5 GB) | **Free** | $0.13/mo | **Free** | $0.02/mo | ~$0.00 | $12.25 one-time | ~$10/mo VPS |
+| 1M (25 GB) | $3.00/mo | $1.25/mo | $0.18/mo | $0.23/mo | ~$0.003/mo | $122.50 one-time | ~$20/mo VPS |
+
+**Key insight**: At any reasonable volume (< 100K images/month), persistent storage costs are negligible compared to on-chain attestation gas. Even at 1M images/month, storage is under $5/month on most providers.
+
+#### NFT.Storage for non-NFT use cases
+
+NFT.Storage was designed for NFT metadata, but its service is not technically restricted to NFTs. It stores any content-addressed data on IPFS + Filecoin with an endowment-backed preservation guarantee. However:
+
+- **Intended use**: NFT.Storage expects you to provide CIDs, blockchain address, contract address, and token IDs. Our EAS attestations don't have a token contract.
+- **Workaround**: You could upload the off-chain attestation and metadata as generic IPFS content using NFT.Storage's upload API. The $4.99/GB one-time pricing is attractive for long-term preservation.
+- **Risk**: NFT.Storage might restrict non-NFT data in the future, or the endowment model might not cover non-NFT use cases. For production use, Storacha or Filebase are safer choices.
+- **With EAS**: An off-chain EAS attestation stored on IPFS via NFT.Storage would be durable but wouldn't have a trusted timestamp. You'd still need on-chain anchoring or a TSA for that.
+
+**Recommendation**: Use **Storacha** (free tier or $10/mo) for general use, or **Filebase** for the cheapest paid option. Use **NFT.Storage** only if long-term endowment-backed preservation is critical and you accept the non-NFT risk. For trusted timestamps, combine any storage provider with on-chain anchoring (~$0.04 per image on L2).
+
+### Combined Cost Summary
+
+| Configuration | Attestation cost | Storage cost | Timestamp | Total per image |
+|---|---|---|---|---|
+| **On-chain attestation + IPFS** | $0.10-0.14 (L2 gas) | ~$0.00 (free tier) | Trusted (block timestamp) | **~$0.10-0.14** |
+| **On-chain attestation + IPFS (with thumbnail)** | $0.10-0.14 (L2 gas) | ~$0.00 (free tier) | Trusted (block timestamp) | **~$0.10-0.14** |
+| **On-chain batch (10 images) + IPFS** | $0.08-0.10 (amortized) | ~$0.00 | Trusted | **~$0.08-0.10** |
+| **Off-chain attestation + Storacha** | $0.00 (no gas) | ~$0.00 (free tier) | Self-reported only | **~$0.00** |
+| **Off-chain attestation + Storacha + on-chain anchor** | ~$0.04 (anchor tx) | ~$0.00 (free tier) | Trusted (anchor) | **~$0.04** |
+| **Off-chain attestation + Filebase** | $0.00 | ~$0.00 (free tier) | Self-reported only | **~$0.00** |
+| **Off-chain attestation + Filebase + on-chain anchor** | ~$0.04 | ~$0.00 (free tier) | Trusted (anchor) | **~$0.04** |
+| **Off-chain attestation + Filecoin direct** | $0.00 | ~$0.00 | Self-reported only | **~$0.00** |
+| **Off-chain attestation + Filecoin direct + on-chain anchor** | ~$0.04 | ~$0.00 | Trusted (anchor) | **~$0.04** |
+| **Off-chain attestation + self-hosted IPFS** | $0.00 | ~$5-20/mo fixed | Self-reported only | **~$0.00** + VPS |
+| **Off-chain attestation + self-hosted IPFS + on-chain anchor** | ~$0.04 | ~$5-20/mo fixed | Trusted (anchor) | **~$0.04** + VPS |
+| **Off-chain attestation + NFT.Storage** | $0.00 | ~$0.0001/image one-time | Self-reported only | **~$0.0001** |
+
+### Recommendation by use case
+
+| Use case | Recommended configuration | Cost per image | Notes |
+|---|---|---|---|
+| **Hobbyist, low volume** | On-chain attestation + Storacha (free) | ~$0.10-0.14 | Simplest; trusted timestamp included |
+| **Organization, medium volume** | On-chain batch + Storacha (free) | ~$0.08-0.10 | Batch to save on gas |
+| **High volume, trusted timestamp needed** | Off-chain + Storacha + on-chain anchor | ~$0.04 | 60-70% gas savings vs full on-chain |
+| **High volume, timestamp not critical** | Off-chain + Storacha (free) | ~$0.00 | Zero marginal cost; self-reported time |
+| **Archival, long-term preservation** | Off-chain + Filecoin direct + on-chain anchor | ~$0.04 | Cheapest archival; Filecoin deals for decades |
+| **Maximum independence** | Off-chain + self-hosted IPFS + on-chain anchor | ~$0.04 + VPS | No third-party dependencies |
+
 ## Signing and Registration Flow
 
 ```
@@ -408,14 +520,32 @@ EAS's composability enables this: a "reputation attestation" schema can referenc
 
 ## Cost Projections
 
+### Fully on-chain (attestation + resolver)
+
 | Volume | Monthly cost (Base L2) | Notes |
 |---|---|---|
 | 100 images/month | ~$10-14 | Hobbyist/individual |
 | 1,000 images/month | ~$100-140 | Small organization |
-| 10,000 images/month | ~$1,000-1,400 | With batching: ~$800-1,000 |
-| 100,000 images/month | ~$10,000-14,000 | Consider off-chain attestations for bulk |
+| 10,000 images/month | ~$800-1,000 | With batching |
+| 100,000 images/month | ~$8,000-10,000 | With batching |
 
-For very high volumes, a hybrid approach using off-chain attestations with periodic on-chain anchoring (Merkle root of a batch) can reduce costs by 10-100x.
+### Off-chain attestation + on-chain anchor (hybrid)
+
+| Volume | Monthly cost (anchor + storage) | Notes |
+|---|---|---|
+| 100 images/month | ~$4 + free storage | ~$0.04/image |
+| 1,000 images/month | ~$40 + free storage | Storacha/Filebase free tier covers this |
+| 10,000 images/month | ~$400 + free storage | Still within free tier for most providers |
+| 100,000 images/month | ~$4,000 + ~$1-2/mo storage | 60% cheaper than fully on-chain |
+
+### Off-chain attestation only (no trusted timestamp)
+
+| Volume | Monthly cost | Notes |
+|---|---|---|
+| Any volume up to 5 GB cumulative | **$0** | Storacha/Filebase free tier |
+| 1M images/month (25 GB cumulative growth) | ~$1-5/month storage | Zero gas; self-reported timestamps only |
+
+For very high volumes, a hybrid approach using off-chain attestations with periodic on-chain Merkle root anchoring (one tx per batch) can reduce costs by 100x while still providing trusted timestamps for the entire batch.
 
 ## References
 
@@ -427,3 +557,8 @@ For very high volumes, a hybrid approach using off-chain attestations with perio
 - [EIP-4844: Shard Blob Transactions](https://eips.ethereum.org/EIPS/eip-4844) -- Future optimization
 - [Base](https://base.org) -- Recommended L2 deployment target
 - [IPFS](https://ipfs.io) -- Off-chain storage for thumbnails, EXIF, metadata
+- [Storacha](https://storacha.network) (formerly web3.storage) -- Decentralized hot storage on IPFS/Filecoin
+- [Filebase](https://filebase.com) -- S3-compatible IPFS/Filecoin pinning
+- [NFT.Storage](https://nft.storage) -- Endowment-backed long-term NFT preservation ($4.99/GB one-time)
+- [Filecoin](https://filecoin.io) -- Decentralized storage network for archival
+- [OpenTimestamps](https://opentimestamps.org) -- Free Bitcoin-anchored timestamps
