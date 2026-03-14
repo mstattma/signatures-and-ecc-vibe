@@ -35,33 +35,32 @@ const SCHEMA_UID = process.env.SCHEMA_UID || deploymentAddrs.schemaUID || "";
 const EAS_ADDRESS = "0x4200000000000000000000000000000000000021";
 
 // Gas cost estimation
-// These are approximate L2 costs (gas price * ETH price).
-// On L2 rollups, the actual cost also includes L1 data posting fees,
-// but for estimation purposes we use a simple gas_used * cost_per_gas model.
+// You pay gas on ONE network only (either L2 or L1, not both).
+// On L2 rollups, the gas price includes the L1 data posting fee amortized into
+// the L2 execution cost. We show the cost for the target deployment network.
 const ETH_PRICE_USD = parseFloat(process.env.ETH_PRICE_USD || "3000");
-const L2_GAS_PRICE_GWEI = parseFloat(process.env.L2_GAS_PRICE_GWEI || "0.01"); // Base/Optimism ~0.01 gwei
-const L1_GAS_PRICE_GWEI = parseFloat(process.env.L1_GAS_PRICE_GWEI || "30");   // Ethereum L1
 
-function gasToUSD(gasUsed, network) {
-  let gasPriceGwei;
-  if (network === "l1") {
-    gasPriceGwei = L1_GAS_PRICE_GWEI;
-  } else {
-    // L2 (Base, Optimism, Nova)
-    gasPriceGwei = L2_GAS_PRICE_GWEI;
-  }
-  const costETH = (Number(gasUsed) * gasPriceGwei) / 1e9;
-  const costUSD = costETH * ETH_PRICE_USD;
-  return costUSD;
-}
+// Approximate effective gas prices (execution + L1 data fee combined)
+const GAS_PRICES = {
+  baseSepolia:  { gwei: 0.01,  label: "Base Sepolia" },
+  base:         { gwei: 0.01,  label: "Base" },
+  optimism:     { gwei: 0.01,  label: "Optimism" },
+  arbitrumNova: { gwei: 0.002, label: "Arbitrum Nova" },
+  l1:           { gwei: 30,    label: "Ethereum L1" },
+  localhost:    { gwei: 0.01,  label: "localhost (Base-equivalent)" },
+  hardhat:      { gwei: 0.01,  label: "hardhat (Base-equivalent)" },
+};
+
+let activeNetwork = "base"; // set in main()
 
 function formatGas(gasUsed) {
-  const usdL2 = gasToUSD(gasUsed, "l2");
-  const usdL1 = gasToUSD(gasUsed, "l1");
-  if (usdL2 < 0.001) {
-    return `${gasUsed} gas (~$${usdL2.toExponential(1)} on L2, ~$${usdL1.toFixed(2)} on L1)`;
-  }
-  return `${gasUsed} gas (~$${usdL2.toFixed(4)} on L2, ~$${usdL1.toFixed(2)} on L1)`;
+  const price = GAS_PRICES[activeNetwork] || GAS_PRICES.base;
+  const costETH = (Number(gasUsed) * price.gwei) / 1e9;
+  const costUSD = costETH * ETH_PRICE_USD;
+  const usdStr = costUSD < 0.001
+    ? `$${costUSD.toExponential(1)}`
+    : `$${costUSD.toFixed(4)}`;
+  return `${gasUsed} gas (~${usdStr} on ${price.label} at ETH=$${ETH_PRICE_USD})`;
 }
 
 // Simulated BLS-BN158 key pair and signature
@@ -96,6 +95,17 @@ async function main() {
   // --- Check if we're on a local network or testnet ---
   const network = await ethers.provider.getNetwork();
   const isLocal = network.chainId === 31337n;
+
+  // Set the active network for gas cost estimation
+  const chainIdToNetwork = {
+    31337n: "localhost",
+    84532n: "baseSepolia",
+    8453n: "base",
+    10n: "optimism",
+    42170n: "arbitrumNova",
+    1n: "l1",
+  };
+  activeNetwork = chainIdToNetwork[network.chainId] || "base";
   console.log("Network:", isLocal ? "hardhat (local)" : `chainId ${network.chainId}`);
   console.log("");
 
@@ -398,8 +408,9 @@ async function main() {
   console.log("  Key lifecycle: tracked on KeyRegistry with validity windows");
   console.log("  Duplicate detection: Bloom filter (cross-chain) + per-chain index");
   console.log("");
-  console.log("  Cost assumptions: ETH = $" + ETH_PRICE_USD + ", L2 gas = " + L2_GAS_PRICE_GWEI + " gwei, L1 gas = " + L1_GAS_PRICE_GWEI + " gwei");
-  console.log("  Override with: ETH_PRICE_USD=... L2_GAS_PRICE_GWEI=... L1_GAS_PRICE_GWEI=...");
+  const price = GAS_PRICES[activeNetwork] || GAS_PRICES.base;
+  console.log(`  Cost estimate: ${price.label}, ${price.gwei} gwei, ETH=$${ETH_PRICE_USD}`);
+  console.log("  Override ETH price: ETH_PRICE_USD=...");
   console.log("=================================================================");
 }
 
