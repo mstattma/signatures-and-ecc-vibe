@@ -1,27 +1,82 @@
-# UOV Signatures for Bandwidth-Constrained Steganographic Channels
+# UOV Fuzzy Signatures for Steganographic Image Authentication
 
-This project implements compact post-quantum digital signatures based on [UOV (Oil and Vinegar)](https://www.pqov.org/) with **salt-in-digest message recovery**, designed for steganographic channels where bandwidth is extremely limited (~400-500 usable bits).
+This project implements compact post-quantum digital signatures based on [UOV (Oil and Vinegar)](https://www.pqov.org/) with **salt-in-digest message recovery**, designed for authenticating images through a steganographic channel embedded in the image itself.
 
-The key insight: UOV signatures have **inherent message recovery** -- the verifier can recover the hash digest directly from the signature by evaluating the public map `P(w)`. We exploit this by embedding a random salt inside the recovered digest, so the salt never needs to be transmitted. The signature is just `w` -- nothing else.
+The core idea: the sender computes a **perceptual hash** of the cover image and signs it with UOV. The signature is steganographically embedded into the image. The receiver extracts the signature, recovers the sender's perceptual hash via the UOV public map `P(w)`, and compares it against their own perceptual hash of the received image. Because perceptual hashes are designed to be robust against minor image modifications, this produces an **authenticity score** rather than a binary valid/invalid result -- a form of **fuzzy signatures**.
 
 ## Overview
 
 ```
-Sender                          Stego Channel              Receiver
-                                (noisy, ~400-500 bits)
-  message ──► sign(sk, msg)                                  has: pk (out-of-band)
-              │                                                    message (own copy)
-              ▼                                                    │
-         ┌──────────┐         ┌──────────────┐                    ▼
-         │signature │ ──────► │  stego embed  │ ──────► P(w) = H(msg)[trunc] || salt
-         │  w only  │         │  (image)      │         ▲                       ▲
-         │(400 bits)│         └──────────────┘         hash verified        salt recovered
-         └──────────┘                                  against H(msg)      (not transmitted!)
+Sender                                                    Receiver
+                                                          
+  image ──► pHash(image) ──► sign(sk, phash)              has: pk (out-of-band)
+                              │                                 │
+                              ▼                                 ▼
+                         ┌──────────┐                     stego_extract(image')
+                         │signature │                           │
+                         │  w only  │                           ▼
+                         │(400 bits)│                     P(w) = phash_sender[trunc] || salt
+                         └────┬─────┘                           │
+                              │                                 ▼
+                              ▼                           pHash(image') = phash_receiver
+                         stego_embed(image, w)                  │
+                              │                                 ▼
+                              ▼                           similarity(phash_sender, phash_receiver)
+                         image' (with embedded sig)             │
+                              │                                 ▼
+                              └────── channel ──────────► authenticity score
 ```
 
-**What goes through the stego channel:** Only the signature vector `w` (400 or 504 bits).
+**What goes through the stego channel:** Only the signature vector `w` (400 or 504 bits), embedded in the image.
+
+**What the receiver recovers:** The sender's perceptual hash, extracted from `P(w)`. This is compared against the receiver's own perceptual hash for a similarity score.
 
 **What goes out-of-band (one-time setup):** The public key (~4-50 KB).
+
+## Fuzzy Signatures and Authenticity Scoring
+
+Traditional digital signatures are binary: valid or invalid. If even a single bit of the message changes, verification fails. This is problematic for image authentication through steganographic channels because:
+
+1. **The stego channel modifies the image**: embedding a signature into an image changes its pixel values slightly. The image the receiver sees is not bit-identical to the original.
+2. **Transmission may further alter the image**: re-compression (JPEG), resizing, color space conversion, and other processing can occur between sender and receiver.
+
+**Perceptual hashing** solves this by producing hash values that are similar (or identical) for visually similar images. By signing a perceptual hash instead of a cryptographic hash of the raw image bytes, we enable a graduated authenticity assessment:
+
+### How it works
+
+1. **Sender**: Computes `phash_sender = pHash(original_image)`, signs it with `ov_sign_digest()`, and embeds the signature `w` into the image using steganography.
+
+2. **Receiver**: Extracts `w` from the received image, evaluates `P(w)` to recover `phash_sender` (the sender's perceptual hash), computes `phash_receiver = pHash(received_image)`, and calculates a similarity score.
+
+3. **Authenticity score**: The score depends on the perceptual hash function used:
+   - **Hamming distance** (for pHash, dHash, aHash): count differing bits. Lower = more authentic.
+   - **Normalized similarity**: `1 - hamming_distance / total_bits`. Higher = more authentic.
+   - **Threshold**: define a threshold (e.g., >90% similar = authentic).
+
+### What this enables
+
+| Scenario | Cryptographic hash | Perceptual hash (ours) |
+|----------|-------------------|----------------------|
+| Image re-compressed (JPEG quality change) | Signature INVALID | Score: ~95% (authentic) |
+| Image slightly cropped or resized | Signature INVALID | Score: ~85% (likely authentic) |
+| Image watermarked or annotated | Signature INVALID | Score: ~70% (modified but recognizable) |
+| Completely different image | Signature INVALID | Score: ~50% (not authentic) |
+| Malicious tampering (face swap, object removal) | Signature INVALID | Score: varies (detectable if significant) |
+
+### Perceptual hash considerations
+
+The choice of perceptual hash function determines the properties of the fuzzy signature. The hash must fit within `_HASH_EFFECTIVE_BYTE` bytes of the recovered digest:
+
+| Perceptual hash | Typical output size | Fits in PARAM=80 (18B) | Fits in PARAM=100 (23B) | Properties |
+|----------------|--------------------|-----------------------|------------------------|------------|
+| pHash (DCT-based) | 8 bytes | Yes | Yes | Robust to scaling, compression |
+| dHash (difference) | 8 bytes | Yes | Yes | Fast, good for near-duplicates |
+| aHash (average) | 8 bytes | Yes | Yes | Simplest, least robust |
+| pHash+ (extended) | 16-32 bytes | Yes (16B) / truncated | Yes | More discriminative |
+| BlockHash | 16-32 bytes | Yes (16B) / truncated | Yes | Good for partial modifications |
+| NNPH (neural) | varies | depends | depends | Most robust, requires ML model |
+
+For hash outputs shorter than `_HASH_EFFECTIVE_BYTE`, the remaining bytes can be used for additional metadata or set to zero. For hash outputs longer than `_HASH_EFFECTIVE_BYTE`, they must be truncated (reducing discriminative power but preserving the fuzzy comparison property).
 
 ## Signature Structure and Salt-in-Digest
 
@@ -31,64 +86,23 @@ A UOV signature consists of a single vector `w`:
 signature = w                 (_PUB_N_BYTE bytes, the ONLY transmitted data)
 
 recovered digest = P(w)       (_PUB_M_BYTE bytes, recovered by the verifier)
-                 = H(msg)[0 .. _HASH_EFFECTIVE_BYTE-1] || salt[0 .. _SALT_BYTE-1]
-                   ▲                                       ▲
-                   hash of message, truncated               random nonce, embedded
-                   (verified against H(msg))                (NOT transmitted)
+                 = phash[0 .. _HASH_EFFECTIVE_BYTE-1] || salt[0 .. _SALT_BYTE-1]
+                   ▲                                      ▲
+                   perceptual hash, truncated              random nonce, embedded
+                   (compared for similarity)               (NOT transmitted)
 ```
 
 **How it works:**
 
-1. **Signing**: The signer computes `H(message)` truncated to `_HASH_EFFECTIVE_BYTE = _PUB_M_BYTE - _SALT_BYTE` bytes, appends `_SALT_BYTE` bytes of random salt, forming the target vector `y`. Then it finds `w` such that `P(w) = y`. The signature is just `w`.
+1. **Signing**: The signer provides the perceptual hash via `ov_sign_digest()`. The first `_HASH_EFFECTIVE_BYTE` bytes are used as the hash portion of the target vector, and `_SALT_BYTE` bytes of salt are appended, forming `y = phash[truncated] || salt`. The signer finds `w` such that `P(w) = y`. The signature is just `w`.
 
-2. **Verification**: The verifier evaluates `P(w)` to recover the full digest. It computes `H(message)` truncated to `_HASH_EFFECTIVE_BYTE` bytes and compares against the first `_HASH_EFFECTIVE_BYTE` bytes of the recovered digest. The last `_SALT_BYTE` bytes are the salt -- they are recovered but not checked (any value is valid).
+2. **Verification**: The verifier evaluates `P(w)` to recover the full digest. The first `_HASH_EFFECTIVE_BYTE` bytes are the sender's perceptual hash. The last `_SALT_BYTE` bytes are the recovered salt (ignored for verification). The verifier compares the recovered perceptual hash against their own computation for a similarity score.
 
-3. **Salt benefits without bandwidth cost**: The salt occupies bits inside the fixed-size digest `P(w)`, not extra bytes in the signature. This provides multi-target attack resistance at zero transmission cost, at the expense of reducing the effective hash length (and thus collision resistance) by `_SALT_BYTE` bytes.
+3. **Strict verification**: For cases where an exact match is needed (same perceptual hash), `ov_verify_digest()` performs a constant-time byte comparison of the hash portion.
 
-### User-provided salt
+### Salt-in-digest
 
-The `ov_sign_salt()` function accepts an optional user-provided salt of any length. If provided, it is hashed down to `_SALT_BYTE` bytes and embedded in the digest. This enables:
-
-- **Deterministic signing**: same message + same salt = same signature
-- **Application-specific nonces**: the caller can provide a timestamp, counter, or other context
-- **Arbitrary salt length**: the salt is hashed, so any length works
-
-```c
-// Random salt (default):
-ov_sign(signature, sk, message, mlen);
-
-// User-provided salt (any length):
-ov_sign_salt(signature, sk, message, mlen, my_salt, my_salt_len);
-```
-
-If `user_salt` is NULL or `user_salt_len` is 0, a random salt is generated.
-
-### Externally-provided digest
-
-The `ov_sign_digest()` and `ov_verify_digest()` functions allow the caller to provide a pre-computed digest directly, skipping the internal SHAKE256 computation. This is useful when:
-
-- The digest was computed by an external system (e.g., SHA-256 from a hardware module)
-- The caller wants full control over the hash function
-- The message is too large to pass directly
-
-```c
-// Sign with an external digest (e.g., SHA-256 output) and random salt:
-uint8_t sha256_hash[32];
-// ... compute sha256_hash externally ...
-ov_sign_digest(signature, sk, sha256_hash, 32, NULL, 0);
-
-// Sign with external digest + user-provided salt:
-ov_sign_digest(signature, sk, sha256_hash, 32, my_salt, my_salt_len);
-
-// Verify against the same external digest:
-int rc = ov_verify_digest(sha256_hash, 32, signature, pk);
-```
-
-The digest is handled as follows:
-- If `digest_len >= _HASH_EFFECTIVE_BYTE`: the first `_HASH_EFFECTIVE_BYTE` bytes are used directly (truncated)
-- If `digest_len < _HASH_EFFECTIVE_BYTE`: the digest is hashed with SHAKE256 to expand it to the required length
-
-Both signer and verifier must use the same digest bytes. The salt (if any) is embedded in the remaining bytes of the recovered `P(w)` as usual.
+The salt occupies bits inside the fixed-size digest `P(w)`, not extra bytes in the signature. This provides multi-target attack resistance at zero transmission cost, at the expense of reducing the effective hash length by `_SALT_BYTE` bytes.
 
 ### Digest layout for each parameter set
 
@@ -109,7 +123,69 @@ The signature is always `w` only (`_PUB_N_BYTE` bytes). The salt does NOT affect
 | 2 B (default) | 50 B = **400 bits** | 72 | 63 B = **504 bits** | 92 |
 | 4 B | 50 B = **400 bits** | 64 | 63 B = **504 bits** | 84 |
 
-The signature size is always the same regardless of salt. More salt = more multi-target protection but less collision resistance.
+## API
+
+### Signing
+
+```c
+// Sign a message (internal SHAKE256 hash, random salt):
+ov_sign(signature, sk, message, mlen);
+
+// Sign a message with user-provided salt (any length, hashed to _SALT_BYTE):
+ov_sign_salt(signature, sk, message, mlen, my_salt, my_salt_len);
+
+// Sign an externally-provided digest (e.g., perceptual hash), optional salt:
+ov_sign_digest(signature, sk, phash, phash_len, salt, salt_len);
+```
+
+### Verification
+
+```c
+// Verify signature against a message (internal SHAKE256 hash):
+int rc = ov_verify(message, mlen, signature, pk);
+
+// Verify signature against an externally-provided digest:
+int rc = ov_verify_digest(phash, phash_len, signature, pk);
+```
+
+### Recovering the perceptual hash (for similarity comparison)
+
+```c
+// Recover the full digest from the signature using the public map:
+uint8_t recovered[_PUB_M_BYTE];
+ov_publicmap(recovered, pk->pk, signature);
+
+// The first _HASH_EFFECTIVE_BYTE bytes are the sender's perceptual hash:
+uint8_t *sender_phash = recovered;  // _HASH_EFFECTIVE_BYTE bytes
+
+// Compute your own perceptual hash of the received image:
+uint8_t my_phash[_HASH_EFFECTIVE_BYTE];
+// ... compute perceptual hash ...
+
+// Calculate similarity (e.g., Hamming distance for pHash):
+int distance = 0;
+for (int i = 0; i < _HASH_EFFECTIVE_BYTE; i++) {
+    distance += __builtin_popcount(sender_phash[i] ^ my_phash[i]);
+}
+float similarity = 1.0f - (float)distance / (_HASH_EFFECTIVE_BYTE * 8);
+// similarity ≈ 1.0 means authentic, ≈ 0.5 means unrelated
+```
+
+### Digest handling
+
+When using `ov_sign_digest()` and `ov_verify_digest()`:
+- If `digest_len >= _HASH_EFFECTIVE_BYTE`: the first `_HASH_EFFECTIVE_BYTE` bytes are used directly (truncated)
+- If `digest_len < _HASH_EFFECTIVE_BYTE`: the digest is hashed with SHAKE256 to expand it to the required length
+
+For fuzzy signature use, it is important to use `digest_len >= _HASH_EFFECTIVE_BYTE` (or exactly `_HASH_EFFECTIVE_BYTE`) so that the perceptual hash bytes are embedded verbatim and can be recovered and compared for similarity. If the digest is shorter and gets expanded by SHAKE256, the similarity comparison property is lost.
+
+### User-provided salt
+
+The salt can be provided by the caller (any length, hashed down to `_SALT_BYTE` bytes):
+
+- **Deterministic signing**: same digest + same salt = same signature
+- **Application-specific nonces**: timestamp, counter, image metadata
+- **NULL or length 0**: random salt is generated
 
 ## Parameter Sets
 
@@ -126,6 +202,7 @@ All signature sizes are `_PUB_N_BYTE` bytes (just `w`), independent of salt conf
 | **n = v + o** | 50 | 63 |
 | **Signature size** | 50 bytes = **400 bits** | 63 bytes = **504 bits** |
 | **Digest from P(w)** | 20 bytes = 160 bits | 25 bytes = 200 bits |
+| **Perceptual hash capacity** | 18 bytes = 144 bits | 23 bytes = 184 bits |
 | **Collision resistance** | 72 bits (with default 2B salt) | 92 bits (with default 2B salt) |
 | **Public key (classic)** | 25,500 bytes | 50,400 bytes |
 | **Public key (compressed)** | 4,216 bytes | 8,141 bytes |
@@ -255,33 +332,31 @@ make stego_demo PARAM=80 VARIANT=3
 | `2` | PKC (compressed PK, uncompressed SK) | Smaller public key |
 | `3` | PKC+SKC (compressed PK + SK) | Smallest keys, slower sign |
 
-## Message Recovery: How It Works
+## How It Works: Message Recovery
 
 UOV has an inherent message recovery property that most descriptions overlook:
 
-1. **Signing**: The signer builds a target `y = H(message)[truncated] || salt`, then finds a signature vector `w` such that `P(w) = y`, where `P` is the public multivariate quadratic map.
+1. **Signing**: The signer provides a perceptual hash (or any digest) and builds a target `y = phash[truncated] || salt`, then finds a signature vector `w` such that `P(w) = y`, where `P` is the public multivariate quadratic map.
 
-2. **Verification**: The verifier evaluates `P(w)` to recover `y`, computes `H(message)` truncated to `_HASH_EFFECTIVE_BYTE` bytes, and checks that it matches the first part of the recovered `y`. The last `_SALT_BYTE` bytes are ignored (any salt value is accepted).
+2. **Recovery**: The verifier evaluates `P(w)` to recover `y`. The first `_HASH_EFFECTIVE_BYTE` bytes are the sender's perceptual hash, recovered verbatim. The last `_SALT_BYTE` bytes are the salt.
 
-3. **Why this is bandwidth-optimal**: The digest `P(w)` has a fixed size of `o * log2(q)` bits regardless of what we put in it. By putting the salt inside those bits rather than appending it to the signature, we get multi-target protection for free -- without increasing the transmitted data.
+3. **Comparison**: The verifier computes their own perceptual hash of the received image and compares it against the recovered hash for similarity. For strict verification, `ov_verify_digest()` checks for exact byte equality.
+
+4. **Why this is bandwidth-optimal**: The digest `P(w)` has a fixed size of `o * log2(q)` bits regardless of what we put in it. By putting the salt inside those bits rather than appending it to the signature, we get multi-target protection for free -- without increasing the transmitted data.
 
 The relevant code path:
 
 ```c
 // Signing (ov.c):
-// Build target: y = H(msg)[0..effective-1] || salt
-hash_final_digest(y, _HASH_EFFECTIVE_BYTE, &hctx_msg);
+// Build target: y = phash[0..effective-1] || salt
+memcpy(y, phash, _HASH_EFFECTIVE_BYTE);
 memcpy(y + _HASH_EFFECTIVE_BYTE, salt, _SALT_BYTE);
-// Find w such that P(w) = y ... signature is just w.
+// Find w such that P(w) = y via _ov_sign_target()
 
-// Verification (ov.c):
-// Recover y = P(w), check hash portion matches H(msg)
-ov_publicmap(digest_ck, pk->pk, signature);
-hash_final_digest(correct, _HASH_EFFECTIVE_BYTE, &hctx);
-// Compare correct[0.._HASH_EFFECTIVE_BYTE-1] against digest_ck[0.._HASH_EFFECTIVE_BYTE-1]
+// Recovery + comparison:
+ov_publicmap(recovered, pk->pk, signature);     // recover phash || salt
+// Compare recovered[0.._HASH_EFFECTIVE_BYTE-1] against own perceptual hash
 ```
-
-The `stego_demo.c` program demonstrates this explicitly, including signing with user-provided salts.
 
 ## Security Estimator
 
@@ -314,26 +389,36 @@ The full pipeline (outer ECC not yet implemented):
 
 ```
 Sender:
-  message ──► UOV sign ──► [w]
-                             │
-                             ▼
-                        [outer RS-ECC]  (adds redundancy for bit flips/erasures)
-                             │
-                             ▼
-                        [interleaver]   (spreads burst errors)
-                             │
-                             ▼
-                        [stego embed]   (hide in cover image)
+  image ──► pHash(image) ──► ov_sign_digest(phash) ──► [w]
+                                                          │
+                                                          ▼
+                                                     [outer RS-ECC]
+                                                          │
+                                                          ▼
+                                                     [interleaver]
+                                                          │
+                                                          ▼
+                                                     stego_embed(image, payload)
+                                                          │
+                                                          ▼
+                                                     image' (with embedded sig)
 
 Receiver:
-  stego image ──► [stego extract] ──► [deinterleave] ──► [RS-ECC decode]
-                                                              │
-                                                              ▼
-                                                         [w]
-                                                              │
-                                                              ▼
-                                                         P(w) = H(msg)[trunc] || salt
-                                                         verify hash portion vs H(msg) ✓
+  image' ──► stego_extract ──► [deinterleave] ──► [RS-ECC decode]
+                                                        │
+                                                        ▼
+                                                   [w]
+                                                        │
+                                                        ▼
+                                                   P(w) = phash_sender || salt
+                                                        │
+                                                        ├──► phash_receiver = pHash(image')
+                                                        │
+                                                        ▼
+                                                   similarity(phash_sender, phash_receiver)
+                                                        │
+                                                        ▼
+                                                   authenticity score
 ```
 
 ## Project Structure
@@ -346,13 +431,13 @@ Receiver:
     ├── Makefile                  # Modified: added PARAM=80/100, SALT=, stego_demo target
     ├── src/
     │   ├── params.h              # Modified: custom params, salt-in-digest, _HASH_EFFECTIVE_BYTE
-    │   ├── ov.c                  # Modified: salt-in-digest signing/verify, ov_sign_salt()
-    │   ├── ov.h                  # Modified: added ov_sign_salt() declaration
+    │   ├── ov.c                  # Modified: _ov_sign_target(), ov_sign_salt/digest(), ov_verify_digest()
+    │   ├── ov.h                  # Modified: added all new API declarations
     │   ├── sign.c                # NIST API wrappers
     │   └── ...
     └── unit_tests/
         ├── sign_api-test.c       # Standard sign/verify test (500 iterations)
-        └── stego_demo.c          # Salt-in-digest message recovery demo
+        └── stego_demo.c          # Message recovery demo with external digest support
 ```
 
 ### Files modified from upstream pqov
@@ -369,24 +454,33 @@ Receiver:
 | File | Description |
 |------|-------------|
 | `uov_security_estimator.py` | Estimates UOV security against all known attacks, searches for optimal parameters |
-| `pqov/unit_tests/stego_demo.c` | Demonstrates salt-in-digest message recovery, user-provided salt, deterministic signing |
+| `pqov/unit_tests/stego_demo.c` | Demonstrates salt-in-digest message recovery, external digest signing, user-provided salt |
 
 ## Threat Model
 
-- **Attacker**: Adaptive chosen-message attacker (EUF-CMA). The attacker can request signatures on messages of their choice and then attempts to forge a valid signature on a new message. This is the standard security model for digital signatures.
-- **Channel**: Noisy steganographic channel with bit flips and erasures
-- **Goal**: Authenticate a hash digest (e.g., image fingerprint) through the stego channel
+- **Attacker**: Adaptive chosen-message attacker (EUF-CMA). The attacker can request signatures on digests of their choice and then attempts to forge a valid signature on a new digest. This is the standard security model for digital signatures.
+- **Channel**: Noisy steganographic channel embedded in images, with bit flips and erasures
+- **Goal**: Authenticate a perceptual image hash through the stego channel, enabling similarity-based verification
 - **Security target**: Existential unforgeability under adaptive chosen-message attack (EUF-CMA)
 - **Public key**: Exchanged out-of-band (up to ~1 MB acceptable)
-- **One image = one message**
+- **One image = one signature**
+
+### Security of fuzzy verification
+
+The UOV signature itself provides standard EUF-CMA security: an attacker cannot forge a signature on a new digest without the secret key. The "fuzzy" aspect is entirely in the verification policy:
+
+- **Strict verification** (`ov_verify_digest()`): checks that the recovered perceptual hash exactly matches the expected one. This has full cryptographic guarantees.
+- **Similarity verification** (application layer): the recovered perceptual hash is compared for similarity against a freshly computed hash. The similarity threshold is a policy decision, not a cryptographic property. A higher threshold is more secure (fewer false positives) but less tolerant of image modifications.
+
+An attacker who does not possess the secret key cannot produce a signature that recovers to any chosen perceptual hash -- this is guaranteed by UOV's unforgeability. The attacker could, however, present a different image that happens to have a similar perceptual hash (a perceptual hash collision). The resistance to this depends on the perceptual hash function, not on UOV.
 
 ### Salt and multi-target security under CMA
 
-The salt embedded in the digest provides multi-target attack resistance. Under CMA, the attacker can request signatures on chosen messages. Without a salt, the attacker can pre-compute collisions across all messages they intend to query -- with `2^k` queries, collision resistance drops by `k` bits. The salt forces each signature to target a unique digest value, preventing this batching.
+The salt embedded in the digest provides multi-target attack resistance. Under CMA, the attacker can request signatures on chosen digests. Without a salt, the attacker can pre-compute collisions across all digests they intend to query -- with `2^k` queries, collision resistance drops by `k` bits. The salt forces each signature to target a unique digest value, preventing this batching.
 
 With `SALT=0` (no salt), signing is fully deterministic and the full `_PUB_M_BYTE * 8 / 2` bits of collision resistance apply to single-target attacks. Multi-target attacks reduce this by `log2(num_queries)` bits.
 
-With the default `SALT=2` (16-bit salt), each query targets a unique digest and multi-target batching requires `2^16` queries on the same message with different salts (which doesn't happen since the signer chooses the salt randomly). The trade-off is that base collision resistance is reduced by `_SALT_BYTE * 8 / 2` bits.
+With the default `SALT=2` (16-bit salt), each query targets a unique digest and multi-target batching requires `2^16` queries on the same digest with different salts (which doesn't happen since the signer chooses the salt randomly). The trade-off is that base collision resistance is reduced by `_SALT_BYTE * 8 / 2` bits.
 
 ## References
 
@@ -395,6 +489,7 @@ With the default `SALT=2` (16-bit salt), each query targets a unique digest and 
 - Kipnis & Shamir, "Cryptanalysis of the Oil & Vinegar Signature Scheme" (1998)
 - Beullens, "Improved Cryptanalysis of UOV and Rainbow" (Eurocrypt 2021)
 - Beullens et al., "Oil and Vinegar: Modern Parameters and Implementations" (2023)
+- Zauner, "Implementation and Benchmarking of Perceptual Image Hash Functions" (2010) -- pHash reference
 
 ## License
 
