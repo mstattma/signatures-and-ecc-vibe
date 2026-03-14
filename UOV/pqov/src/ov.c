@@ -205,16 +205,21 @@ int ov_sign_digest( uint8_t *signature, const sk_t *sk,
 #endif
 
     // The caller provides the digest directly.
-    // If digest_len >= _HASH_EFFECTIVE_BYTE, we truncate.
-    // If digest_len < _HASH_EFFECTIVE_BYTE, we hash it to expand/normalize.
+    // If digest_len > max recoverable bytes, reject (would silently truncate).
+    // If digest_len == needed, copy directly.
+    // If digest_len < needed, hash it to expand/normalize.
     uint8_t hash_bytes[_PUB_M_BYTE];
 #if _SALT_BYTE > 0
     size_t needed = _HASH_EFFECTIVE_BYTE;
 #else
     size_t needed = _PUB_M_BYTE;
 #endif
-    if ( digest_len >= needed ) {
-        // Truncate to needed bytes
+    if ( digest_len > needed ) {
+        // Digest too long -- would be truncated and unrecoverable.
+        // Reject to prevent silent data loss.
+        return -2;
+    }
+    if ( digest_len == needed ) {
         memcpy( hash_bytes, digest, needed );
     } else {
         // Hash the digest to produce the needed bytes (expand short input)

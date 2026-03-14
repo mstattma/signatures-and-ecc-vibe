@@ -35,9 +35,20 @@ The unified API abstracts this difference: the caller always provides a pHash to
 |---|---|---|---|---|
 | 96-bit | **400** | **504** | **264** | **488** |
 | 144-bit | **400** | **504** | **312** | **536** |
-| 184-bit | **400** | **504** | **352** | **576** |
+| 184-bit | **N/A** [^trunc] | **504** | **352** | **576** |
 
 UOV payloads are constant regardless of pHash size (pHash is recovered from the signature, not transmitted). BLS payloads grow with pHash size.
+
+[^trunc]: **UOV-80 cannot sign a 184-bit pHash.** UOV-80 recovers at most 144 bits of hash (18 bytes = `_HASH_EFFECTIVE_BYTE` with 2-byte salt). A 184-bit pHash would be silently truncated to 144 bits, making the full pHash unrecoverable by the verifier. The implementation rejects pHashes exceeding `stego_max_phash_bytes()` with an error. UOV-100 supports up to 184 bits (exact fit with 2-byte salt). For pHashes longer than 144 bits, use UOV-100 or BLS.
+
+### Maximum pHash length per scheme
+
+| Scheme | Max pHash | Reason |
+|---|---|---|
+| UOV-80 | **144 bits** (18 bytes) | Recoverable digest = 20 bytes - 2 byte salt = 18 bytes |
+| UOV-100 | **184 bits** (23 bytes) | Recoverable digest = 25 bytes - 2 byte salt = 23 bytes |
+| BLS-BN158 | Unlimited | pHash transmitted verbatim in payload |
+| BLS12-381 | Unlimited | pHash transmitted verbatim in payload |
 
 ### With PK appended (PK in-band)
 
@@ -45,7 +56,7 @@ UOV payloads are constant regardless of pHash size (pHash is recovered from the 
 |---|---|---|---|---|
 | 96-bit | 204,400 | 403,704 | **592** | **1,264** |
 | 144-bit | 204,400 | 403,704 | **640** | **1,312** |
-| 184-bit | 204,400 | 403,704 | **680** | **1,352** |
+| 184-bit | N/A [^trunc] | 403,704 | **680** | **1,352** |
 
 UOV public keys are 25.5-50.4 KB -- in-band PK is impractical. BLS public keys are 41-97 bytes, making in-band PK feasible.
 
@@ -64,9 +75,9 @@ UOV public keys are 25.5-50.4 KB -- in-band PK is impractical. BLS public keys a
 | BLS-BN158 + 96-bit pHash, no PK | **264** | Yes (236 bits spare for ECC) |
 | BLS-BN158 + 144-bit pHash, no PK | **312** | Yes (188 bits spare) |
 | BLS-BN158 + 184-bit pHash, no PK | **352** | Yes (148 bits spare) |
-| UOV-80, any pHash, no PK | **400** | Yes (100 bits spare) |
+| UOV-80, pHash <= 144 bits, no PK | **400** | Yes (100 bits spare) |
 | BLS12-381 + 96-bit pHash, no PK | **488** | Tight (12 bits spare) |
-| UOV-100, any pHash, no PK | **504** | Barely (needs efficient ECC) |
+| UOV-100, pHash <= 184 bits, no PK | **504** | Barely (needs efficient ECC) |
 | BLS12-381 + 144-bit pHash, no PK | **536** | No (needs ~1000-bit channel) |
 | BLS-BN158 + 96-bit pHash + PK | **592** | No (needs ~600-bit channel) |
 | BLS-BN158 + 144-bit pHash + PK | **640** | No (needs ~700-bit channel) |
@@ -78,6 +89,7 @@ UOV public keys are 25.5-50.4 KB -- in-band PK is impractical. BLS public keys a
 | Property | UOV-80 | UOV-100 | BLS-BN158 | BLS12-381 |
 |---|---|---|---|---|
 | Smallest payload (no PK) | 400 bits | 504 bits | **264 bits** (96b pHash) | 488 bits (96b pHash) |
+| Max pHash | **144 bits** | **184 bits** | Unlimited | Unlimited |
 | PK in-band feasible? | No (25.5 KB) | No (50.4 KB) | **Yes** (41 B) | Marginal (97 B) |
 | pHash transmitted? | No (recovered) | No (recovered) | Yes | Yes |
 | Post-quantum? | **Yes** | **Yes** | No | No |

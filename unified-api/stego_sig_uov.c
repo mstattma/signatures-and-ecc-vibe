@@ -51,6 +51,14 @@ int stego_sig_bytes(void) { return OV_SIGNATUREBYTES; }
 int stego_pk_bytes(void)  { return CRYPTO_PUBLICKEYBYTES; }
 int stego_sk_bytes(void)  { return CRYPTO_SECRETKEYBYTES; }
 
+int stego_max_phash_bytes(void) {
+#if _SALT_BYTE > 0
+    return _HASH_EFFECTIVE_BYTE;
+#else
+    return _PUB_M_BYTE;
+#endif
+}
+
 int stego_payload_bytes(int phash_len, int append_pk) {
     (void)phash_len; /* pHash not transmitted for UOV (message recovery) */
     int total = OV_SIGNATUREBYTES;
@@ -88,6 +96,9 @@ int stego_sign(uint8_t *payload, int *payload_len,
                const uint8_t *pk, int pk_len)
 {
     (void)sk_len;
+
+    /* Reject pHash longer than the recoverable digest size */
+    if (phash_len > stego_max_phash_bytes()) return STEGO_ERR;
 
     uint8_t sig[OV_SIGNATUREBYTES];
     int rc;

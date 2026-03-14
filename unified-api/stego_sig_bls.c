@@ -70,6 +70,7 @@ static void cache_sizes(void) {
 int stego_sig_bytes(void) { cache_sizes(); return s_sig_bytes; }
 int stego_pk_bytes(void)  { cache_sizes(); return s_pk_bytes; }
 int stego_sk_bytes(void)  { cache_sizes(); return s_sk_bytes; }
+int stego_max_phash_bytes(void) { return 1024; } /* BLS: no limit (pHash transmitted verbatim) */
 
 int stego_payload_bytes(int phash_len, int append_pk) {
     cache_sizes();

@@ -51,6 +51,7 @@ int main(void) {
            ? "Yes (pHash recovered from sig)" : "No (pHash transmitted explicitly)");
     printf("Signature:        %d bytes = %d bits\n", stego_sig_bytes(), stego_sig_bytes() * 8);
     printf("Public key:       %d bytes = %d bits\n", stego_pk_bytes(), stego_pk_bytes() * 8);
+    printf("Max pHash:        %d bytes = %d bits\n", stego_max_phash_bytes(), stego_max_phash_bytes() * 8);
     printf("\n");
 
     /* ============================================================ */
@@ -76,14 +77,20 @@ int main(void) {
     /* Step 2: Payload size table                                    */
     /* ============================================================ */
     printf("--- Step 2: Payload Sizes ---\n\n");
-    printf("  %-10s | %-14s | %-14s\n", "pHash bits", "No PK (bits)", "With PK (bits)");
-    printf("  %s\n", "-----------|----------------|----------------");
+    int max_ph = stego_max_phash_bytes();
+    printf("  %-10s | %-14s | %-14s | %s\n", "pHash bits", "No PK (bits)", "With PK (bits)", "");
+    printf("  %s\n", "-----------|----------------|----------------|---");
     for (int i = 0; i < NUM_PHASH; i++) {
         int ph = PHASH_SIZES[i];
-        printf("  %-10d | %-14d | %-14d\n",
-               ph * 8,
-               stego_payload_bytes(ph, 0) * 8,
-               stego_payload_bytes(ph, 1) * 8);
+        if (ph > max_ph) {
+            printf("  %-10d | %-14s | %-14s | REJECTED (max %d bits)\n",
+                   ph * 8, "N/A", "N/A", max_ph * 8);
+        } else {
+            printf("  %-10d | %-14d | %-14d |\n",
+                   ph * 8,
+                   stego_payload_bytes(ph, 0) * 8,
+                   stego_payload_bytes(ph, 1) * 8);
+        }
     }
     printf("\n");
 
@@ -110,7 +117,12 @@ int main(void) {
                         NULL, 0,   /* random salt / ignored */
                         0, NULL, 0);
         if (rc != STEGO_OK) {
-            printf("  %3d-bit pHash: SIGN FAILED\n", ph_len * 8);
+            if (ph_len > stego_max_phash_bytes()) {
+                printf("  %3d-bit pHash: REJECTED (exceeds max %d bits, would be truncated)\n",
+                       ph_len * 8, stego_max_phash_bytes() * 8);
+            } else {
+                printf("  %3d-bit pHash: SIGN FAILED\n", ph_len * 8);
+            }
             continue;
         }
 
@@ -238,10 +250,16 @@ int main(void) {
            stego_has_message_recovery() ? "Yes" : "No");
     printf("  Signature:        %d bits\n", stego_sig_bytes() * 8);
     printf("  Public key:       %d bits\n", stego_pk_bytes() * 8);
+    printf("  Max pHash:        %d bits\n", stego_max_phash_bytes() * 8);
     printf("\n");
     printf("  Payload sizes:\n");
     for (int i = 0; i < NUM_PHASH; i++) {
         int ph = PHASH_SIZES[i];
+        if (ph > stego_max_phash_bytes()) {
+            printf("    %3d-bit pHash: REJECTED (exceeds max %d bits)\n",
+                   ph * 8, stego_max_phash_bytes() * 8);
+            continue;
+        }
         printf("    %3d-bit pHash: %4d bits (no PK) / %4d bits (with PK)\n",
                ph * 8,
                stego_payload_bytes(ph, 0) * 8,

@@ -70,6 +70,14 @@ int stego_pk_bytes(void);
 int stego_sk_bytes(void);
 
 /**
+ * Maximum pHash length in bytes that can be signed without truncation.
+ * For UOV: limited by the recoverable digest size (_HASH_EFFECTIVE_BYTE).
+ * For BLS: unlimited (pHash transmitted verbatim, returns a large value).
+ * Signing a pHash longer than this will return STEGO_ERR.
+ */
+int stego_max_phash_bytes(void);
+
+/**
  * Compute total payload size for a given configuration.
  * @param phash_len  pHash length in bytes.
  * @param append_pk  1 to include PK in payload, 0 otherwise.

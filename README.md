@@ -34,19 +34,21 @@ make test SCHEME=bls-bn158    # Classical, 264-352 bit payload
 
 ### Payload sizes (bits, without PK)
 
-| pHash | UOV-80 | UOV-100 | BLS-BN158 | BLS12-381 |
+| pHash | UOV-80 (max 144b) | UOV-100 (max 184b) | BLS-BN158 | BLS12-381 |
 |---|---|---|---|---|
 | 96-bit | 400 | 504 | **264** | 488 |
 | 144-bit | 400 | 504 | **312** | 536 |
-| 184-bit | 400 | 504 | **352** | 576 |
+| 184-bit | N/A (truncated) | 504 | **352** | 576 |
+
+> **Note:** UOV-80 can sign pHashes up to **144 bits** (18 bytes). A 184-bit pHash exceeds the recoverable digest size and would be silently truncated -- the implementation rejects this with an error. Use UOV-100 (max 184 bits) or BLS for larger pHashes.
 
 ### Payload sizes (bits, with PK in-band)
 
-| pHash | UOV-80 | UOV-100 | BLS-BN158 | BLS12-381 |
+| pHash | UOV-80 (max 144b) | UOV-100 (max 184b) | BLS-BN158 | BLS12-381 |
 |---|---|---|---|---|
 | 96-bit | 204,400 | 403,704 | **592** | 1,264 |
 | 144-bit | 204,400 | 403,704 | **640** | 1,312 |
-| 184-bit | 204,400 | 403,704 | **680** | 1,352 |
+| 184-bit | N/A | 403,704 | **680** | 1,352 |
 
 ## Documentation
 
