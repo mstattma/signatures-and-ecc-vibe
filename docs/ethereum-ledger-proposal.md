@@ -427,13 +427,87 @@ Batching amortizes the base transaction cost (~21,000 gas) across multiple attes
 
 For maximum gas savings, EAS supports **off-chain attestations**: the attestation data is signed with EIP-712 but NOT submitted to the blockchain. The signed attestation can be stored on IPFS, a centralized server, or shared peer-to-peer.
 
-| Mode | Gas cost | Trust model | Timestamp |
-|---|---|---|---|
-| On-chain | ~100,000-140,000 | Trustless (blockchain consensus) | Block timestamp (tamper-proof) |
-| Off-chain | **0** | Requires trust in storage layer | Signer's timestamp (self-reported) |
-| Off-chain + on-chain timestamp | ~40,000 | Hybrid (timestamp on-chain, data off-chain) | Trusted timestamp via on-chain tx |
+However, with the Key Registry, Reputation Registry, and ImageAuthResolver in place, a **pure off-chain attestation bypasses all on-chain checks**: no duplicate detection, no key validity enforcement, no reputation tracking. To preserve these guarantees while still reducing gas costs, we offer a **hybrid registration** mode.
 
-For applications where a trusted timestamp is not critical, off-chain attestations reduce gas to zero. The attestation can be anchored on-chain later if needed.
+#### Mode comparison
+
+| Mode | Attestation gas | Checks gas | Total gas | Trust model | Timestamp | Duplicate detection | Key validity | Reputation |
+|---|---|---|---|---|---|---|---|---|
+| **Fully on-chain** | ~80,000 | ~85,000 (resolver) | **~165,000** | Trustless | Block timestamp | On-chain | On-chain | On-chain |
+| **Hybrid: lightweight on-chain registration + off-chain attestation** | 0 (off-chain) | ~70,000 (register call) | **~70,000** | Hybrid | Block timestamp (from register tx) | On-chain | On-chain | On-chain |
+| **Off-chain only + on-chain anchor** | 0 | ~40,000 (hash anchor) | **~40,000** | Partial | Block timestamp (from anchor) | **None** | **None** | **None** |
+| **Fully off-chain** | 0 | 0 | **0** | Trust storage | Self-reported | **None** | **None** | **None** |
+
+#### Hybrid registration contract
+
+The hybrid mode splits the concerns: the full attestation data lives off-chain (IPFS), but a lightweight on-chain registration provides duplicate detection, key validity enforcement, reputation tracking, and a trusted timestamp — without the gas cost of storing the full attestation data on-chain.
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.19;
+
+contract LightRegistration {
+    IKeyRegistry public keyRegistry;
+    IReputationRegistry public reputationRegistry;
+
+    // keccak256(pHash || salt) => registrant
+    mapping(bytes32 => address) public pHashSaltOwner;
+
+    // sigPrefix => keccak256(off-chain attestation)
+    mapping(bytes16 => bytes32) public sigPrefixToAttestation;
+
+    event ImageRegistered(
+        address indexed attester,
+        bytes16 indexed sigPrefix,
+        bytes32 pHashSaltKey,
+        bytes32 attestationHash,
+        bytes32 metadataCID
+    );
+
+    /// @notice Register an image with lightweight on-chain checks.
+    ///         Full attestation data is stored off-chain (IPFS).
+    function registerImage(
+        bytes16 sigPrefix,
+        bytes24 pHash,
+        bytes2 salt,
+        bytes calldata publicKey,
+        bytes32 attestationHash,  // keccak256(full off-chain attestation)
+        bytes32 metadataCID       // IPFS CID of attestation + metadata
+    ) external {
+        // Enforce (pHash, salt) uniqueness
+        bytes32 pHashSaltKey = keccak256(abi.encodePacked(pHash, salt));
+        require(pHashSaltOwner[pHashSaltKey] == address(0), "Duplicate (pHash, salt)");
+
+        // Verify the signing key is currently valid
+        require(
+            keyRegistry.isKeyValidAt(publicKey, uint64(block.timestamp)),
+            "Signing key not active"
+        );
+
+        // Record registration
+        pHashSaltOwner[pHashSaltKey] = msg.sender;
+        sigPrefixToAttestation[sigPrefix] = attestationHash;
+
+        // Update reputation
+        reputationRegistry.onImageRegistered(msg.sender);
+
+        emit ImageRegistered(msg.sender, sigPrefix, pHashSaltKey, attestationHash, metadataCID);
+    }
+}
+```
+
+**Gas cost: ~65,000-75,000 gas (~$0.065-0.075 on L2)** — roughly half of the full on-chain attestation, while preserving all security checks. The event log contains enough data for off-chain indexers to locate the full attestation on IPFS.
+
+#### Choosing a mode
+
+| Use case | Recommended mode | Cost per image | Guarantees |
+|---|---|---|---|
+| **Default / standard** | Fully on-chain | ~$0.13-0.17 | All checks, full data on-chain |
+| **Cost-sensitive, need checks** | Hybrid registration | **~$0.065-0.075** | All checks, data on IPFS |
+| **Cost-sensitive, trust storage** | Off-chain + anchor | ~$0.04 | Trusted timestamp only |
+| **Bulk ingestion, post-hoc checks** | Fully off-chain | ~$0.00 | None (verify later) |
+
+The **hybrid mode is the recommended cost-optimized path** for production use. It is ~55% cheaper than fully on-chain while retaining duplicate detection, key validity enforcement, and reputation tracking.
 
 ### Off-Chain Attestation Size
 
@@ -588,50 +662,44 @@ NFT.Storage was designed for NFT metadata, but its service is not technically re
 
 #### Without thumbnail (~3 KB per image)
 
-| Configuration | Attestation | Storage | Timestamp | Total per image |
-|---|---|---|---|---|
-| **On-chain + Storacha (free)** | $0.10-0.14 | ~$0.00 | Trusted (block) | **~$0.10-0.14** |
-| **On-chain batch (10) + Storacha** | $0.08-0.10 | ~$0.00 | Trusted | **~$0.08-0.10** |
-| **Off-chain + Storacha (free)** | $0.00 | ~$0.00 | Self-reported | **~$0.00** |
-| **Off-chain + Storacha + anchor** | ~$0.04 | ~$0.00 | Trusted | **~$0.04** |
-| **Off-chain + Filebase (free)** | $0.00 | ~$0.00 | Self-reported | **~$0.00** |
-| **Off-chain + Filebase + anchor** | ~$0.04 | ~$0.00 | Trusted | **~$0.04** |
-| **Off-chain + Filecoin direct** | $0.00 | ~$0.00 | Self-reported | **~$0.00** |
-| **Off-chain + Filecoin + anchor** | ~$0.04 | ~$0.00 | Trusted | **~$0.04** |
-| **Off-chain + self-hosted** | $0.00 | ~$5-20/mo VPS | Self-reported | **~$0.00** + VPS |
-| **Off-chain + self-hosted + anchor** | ~$0.04 | ~$5-20/mo VPS | Trusted | **~$0.04** + VPS |
-
-Without thumbnails, storage is negligible at all volumes. The dominant cost is always the attestation/anchor gas.
+| Configuration | On-chain gas | Storage | Timestamp | Dup detect | Key check | Reputation | Total per image |
+|---|---|---|---|---|---|---|---|
+| **Fully on-chain** | $0.13-0.17 | ~$0.00 | Trusted | Yes | Yes | Yes | **~$0.13-0.17** |
+| **Hybrid registration + Storacha** | ~$0.07 | ~$0.00 | Trusted | Yes | Yes | Yes | **~$0.07** |
+| **Hybrid registration + Filebase** | ~$0.07 | ~$0.00 | Trusted | Yes | Yes | Yes | **~$0.07** |
+| **Hybrid registration + Filecoin** | ~$0.07 | ~$0.00 | Trusted | Yes | Yes | Yes | **~$0.07** |
+| **Hybrid registration + self-hosted** | ~$0.07 | ~$5-20/mo VPS | Trusted | Yes | Yes | Yes | **~$0.07** + VPS |
+| **Off-chain + anchor only** | ~$0.04 | ~$0.00 | Trusted | No | No | No | **~$0.04** |
+| **Fully off-chain + Storacha** | $0.00 | ~$0.00 | Self-reported | No | No | No | **~$0.00** |
 
 #### With 2.5MP AVIF thumbnail (~30 KB per image)
 
-| Configuration | Attestation | Storage | Timestamp | Total per image |
-|---|---|---|---|---|
-| **On-chain + Storacha (free)** | $0.10-0.14 | ~$0.00 | Trusted (block) | **~$0.10-0.14** |
-| **On-chain batch (10) + Storacha** | $0.08-0.10 | ~$0.00 | Trusted | **~$0.08-0.10** |
-| **Off-chain + Storacha (free)** | $0.00 | ~$0.00 | Self-reported | **~$0.00** |
-| **Off-chain + Storacha ($10/mo)** | $0.00 | ~$0.000005 | Self-reported | **~$0.00** |
-| **Off-chain + Storacha + anchor** | ~$0.04 | ~$0.00 | Trusted | **~$0.04** |
-| **Off-chain + Filebase (free)** | $0.00 | ~$0.00 | Self-reported | **~$0.00** |
-| **Off-chain + Filebase + anchor** | ~$0.04 | ~$0.00 | Trusted | **~$0.04** |
-| **Off-chain + Filecoin direct** | $0.00 | ~$0.000003 | Self-reported | **~$0.00** |
-| **Off-chain + Filecoin + anchor** | ~$0.04 | ~$0.000003 | Trusted | **~$0.04** |
-| **Off-chain + self-hosted** | $0.00 | ~$5-20/mo VPS | Self-reported | **~$0.00** + VPS |
-| **Off-chain + self-hosted + anchor** | ~$0.04 | ~$5-20/mo VPS | Trusted | **~$0.04** + VPS |
-| **Off-chain + NFT.Storage** | $0.00 | ~$0.00015 one-time | Self-reported | **~$0.0002** |
+| Configuration | On-chain gas | Storage | Timestamp | Dup detect | Key check | Reputation | Total per image |
+|---|---|---|---|---|---|---|---|
+| **Fully on-chain + Storacha** | $0.13-0.17 | ~$0.00 | Trusted | Yes | Yes | Yes | **~$0.13-0.17** |
+| **Hybrid registration + Storacha** | ~$0.07 | ~$0.00 | Trusted | Yes | Yes | Yes | **~$0.07** |
+| **Hybrid registration + Filebase** | ~$0.07 | ~$0.00 | Trusted | Yes | Yes | Yes | **~$0.07** |
+| **Hybrid registration + Filecoin** | ~$0.07 | ~$0.000003 | Trusted | Yes | Yes | Yes | **~$0.07** |
+| **Hybrid registration + self-hosted** | ~$0.07 | ~$5-20/mo VPS | Trusted | Yes | Yes | Yes | **~$0.07** + VPS |
+| **Off-chain + anchor + Storacha** | ~$0.04 | ~$0.00 | Trusted | No | No | No | **~$0.04** |
+| **Off-chain + anchor + Filebase** | ~$0.04 | ~$0.00 | Trusted | No | No | No | **~$0.04** |
+| **Fully off-chain + Storacha** | $0.00 | ~$0.00 | Self-reported | No | No | No | **~$0.00** |
+| **Fully off-chain + NFT.Storage** | $0.00 | ~$0.00015 | Self-reported | No | No | No | **~$0.0002** |
 
-Even with 2.5MP AVIF thumbnails, the per-image storage cost never exceeds $0.001. The on-chain attestation or anchor gas remains the dominant cost by 100-1000x.
+Storage costs are negligible at all volumes (with or without thumbnails). The dominant cost is on-chain gas. The **hybrid registration** mode preserves all security guarantees at roughly half the gas cost of fully on-chain attestation.
 
 ### Recommendation by use case
 
-| Use case | Recommended configuration | Cost per image | Notes |
-|---|---|---|---|
-| **Hobbyist, low volume** | On-chain attestation + Storacha (free) | ~$0.10-0.14 | Simplest; trusted timestamp included |
-| **Organization, medium volume** | On-chain batch + Storacha (free) | ~$0.08-0.10 | Batch to save on gas |
-| **High volume, trusted timestamp needed** | Off-chain + Storacha + on-chain anchor | ~$0.04 | 60-70% gas savings vs full on-chain |
-| **High volume, timestamp not critical** | Off-chain + Storacha (free) | ~$0.00 | Zero marginal cost; self-reported time |
-| **Archival, long-term preservation** | Off-chain + Filecoin direct + on-chain anchor | ~$0.04 | Cheapest archival; Filecoin deals for decades |
-| **Maximum independence** | Off-chain + self-hosted IPFS + on-chain anchor | ~$0.04 + VPS | No third-party dependencies |
+| Use case | Recommended mode | Cost per image | Dup/Key/Rep checks | Notes |
+|---|---|---|---|---|
+| **Standard (recommended)** | Hybrid registration + Storacha | **~$0.07** | Yes | Best balance of cost and guarantees |
+| **Simplest setup** | Fully on-chain + Storacha | ~$0.13-0.17 | Yes | All data on-chain; no IPFS dependency for attestation data |
+| **Organization, batch** | Fully on-chain batch (10) + Storacha | ~$0.10-0.12 | Yes | Batch amortizes base tx cost |
+| **High volume, need checks** | Hybrid registration + Filebase | **~$0.07** | Yes | Cheapest with full guarantees |
+| **High volume, trust storage** | Off-chain + anchor + Storacha | ~$0.04 | No | Trusted timestamp but no dup/key/rep checks |
+| **Bulk ingestion** | Fully off-chain + Storacha | ~$0.00 | No | Post-hoc verification; no on-chain guarantees |
+| **Archival** | Hybrid registration + Filecoin | **~$0.07** | Yes | Long-term Filecoin deals for decades |
+| **Maximum independence** | Hybrid registration + self-hosted | ~$0.07 + VPS | Yes | No third-party dependencies |
 
 ## Signing and Registration Flow
 
@@ -1023,32 +1091,41 @@ The smart contracts themselves are open-source and permissionless — anyone can
 
 ## Cost Projections
 
-### Fully on-chain (attestation + resolver)
+### Fully on-chain (EAS attestation + resolver with all checks)
 
 | Volume | Monthly cost (Base L2) | Notes |
 |---|---|---|
-| 100 images/month | ~$10-14 | Hobbyist/individual |
-| 1,000 images/month | ~$100-140 | Small organization |
-| 10,000 images/month | ~$800-1,000 | With batching |
-| 100,000 images/month | ~$8,000-10,000 | With batching |
+| 100 images/month | ~$13-17 | Hobbyist/individual |
+| 1,000 images/month | ~$130-170 | Small organization |
+| 10,000 images/month | ~$1,000-1,200 | With batching |
+| 100,000 images/month | ~$10,000-12,000 | With batching |
 
-### Off-chain attestation + on-chain anchor (hybrid)
+### Hybrid registration (recommended — all checks, data on IPFS)
+
+| Volume | Monthly cost | Notes |
+|---|---|---|
+| 100 images/month | **~$7** | All checks preserved |
+| 1,000 images/month | **~$70** | ~55% cheaper than fully on-chain |
+| 10,000 images/month | **~$700** | |
+| 100,000 images/month | **~$7,000** | |
+
+### Off-chain attestation + on-chain anchor (no dup/key/rep checks)
 
 | Volume | Monthly cost (anchor + storage) | Notes |
 |---|---|---|
-| 100 images/month | ~$4 + free storage | ~$0.04/image |
-| 1,000 images/month | ~$40 + free storage | Storacha/Filebase free tier covers this |
-| 10,000 images/month | ~$400 + free storage | Still within free tier for most providers |
-| 100,000 images/month | ~$4,000 + ~$1-2/mo storage | 60% cheaper than fully on-chain |
+| 100 images/month | ~$4 + free storage | ~$0.04/image; no on-chain duplicate detection |
+| 1,000 images/month | ~$40 + free storage | |
+| 10,000 images/month | ~$400 + free storage | |
+| 100,000 images/month | ~$4,000 + ~$1-2/mo storage | ~75% cheaper than fully on-chain |
 
-### Off-chain attestation only (no trusted timestamp)
+### Fully off-chain (no on-chain guarantees)
 
 | Volume | Monthly cost | Notes |
 |---|---|---|
 | Any volume up to 5 GB cumulative | **$0** | Storacha/Filebase free tier |
-| 1M images/month (25 GB cumulative growth) | ~$1-5/month storage | Zero gas; self-reported timestamps only |
+| 1M images/month (30 GB cumulative growth) | ~$1-5/month storage | Zero gas; no on-chain checks |
 
-For very high volumes, a hybrid approach using off-chain attestations with periodic on-chain Merkle root anchoring (one tx per batch) can reduce costs by 100x while still providing trusted timestamps for the entire batch.
+For very high volumes, a hybrid approach using off-chain attestations with periodic on-chain Merkle root anchoring (one tx per batch) can reduce costs further while still providing trusted timestamps for the entire batch. However, this does not provide per-image duplicate detection or key validity checks — those require individual on-chain registrations (either fully on-chain or hybrid mode).
 
 ## References
 
