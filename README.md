@@ -168,7 +168,7 @@ The stego signature provides in-image authentication, but a backend ledger enabl
 | `signature` | Yes | The stego signature (indexed for lookup) |
 | `signature_scheme` | Yes | Scheme identifier (e.g., "uov-80", "bls12-381") |
 | `pHash` | Yes | Perceptual hash of the original image |
-| `salt` | If UOV | Salt used in signing (needed for UOV verification) |
+| `salt` | Yes | Salt used in signing (ensures distinct signatures for same pHash; needed for verification and duplicate detection) |
 | `public_key` | Yes | Stego signing PK (enables out-of-band PK distribution) |
 | `file_hash` | Yes | SHA-256 of the image after embedding (integrity check) |
 | `file_name` | Yes | Original filename |

@@ -175,10 +175,15 @@ float similarity = 1.0f - (float)distance / (_HASH_EFFECTIVE_BYTE * 8);
 ### Digest handling
 
 When using `ov_sign_digest()` and `ov_verify_digest()`:
-- If `digest_len >= _HASH_EFFECTIVE_BYTE`: the first `_HASH_EFFECTIVE_BYTE` bytes are used directly (truncated)
+- If `digest_len > _HASH_EFFECTIVE_BYTE`: **signing is rejected** (returns `-2`). This prevents silent truncation of the perceptual hash, which would make the full pHash unrecoverable by the verifier.
+- If `digest_len == _HASH_EFFECTIVE_BYTE`: the digest bytes are used directly (verbatim, optimal for fuzzy comparison)
 - If `digest_len < _HASH_EFFECTIVE_BYTE`: the digest is hashed with SHAKE256 to expand it to the required length
 
-For fuzzy signature use, it is important to use `digest_len >= _HASH_EFFECTIVE_BYTE` (or exactly `_HASH_EFFECTIVE_BYTE`) so that the perceptual hash bytes are embedded verbatim and can be recovered and compared for similarity. If the digest is shorter and gets expanded by SHAKE256, the similarity comparison property is lost.
+For fuzzy signature use, it is important to use `digest_len == _HASH_EFFECTIVE_BYTE` so that the perceptual hash bytes are embedded verbatim and can be recovered and compared for similarity. If the digest is shorter and gets expanded by SHAKE256, the similarity comparison property is lost.
+
+**Maximum pHash lengths:**
+- `PARAM=80`: max 18 bytes = 144 bits (a 184-bit pHash is rejected)
+- `PARAM=100`: max 23 bytes = 184 bits (exact fit for 184-bit pHashes)
 
 ### User-provided salt
 
@@ -441,12 +446,32 @@ Receiver:
         └── stego_demo.c          # Message recovery demo with external digest support
 ```
 
+### Summary of modifications from upstream pqov
+
+The following modifications were made to the [upstream pqov reference implementation](https://github.com/pqov/pqov) to support compact signatures for steganographic channels:
+
+1. **Custom parameter sets** (`PARAM=80`, `PARAM=100`): Reduced-size UOV parameters (GF(256), n=50/o=20 and n=63/o=25) providing 80-bit and 100-bit security respectively, selected via `uov_security_estimator.py` as the smallest signatures meeting the security targets.
+
+2. **Salt-in-digest architecture**: The salt is embedded inside the recovered digest `P(w)` rather than appended to the signature. This reduces transmitted payload from `n + salt_bytes` to just `n` bytes at the cost of `salt_bytes * 4` bits of collision resistance. Configurable via `_SALT_BYTE` (default 2 bytes = 16 bits).
+
+3. **Signature = w only**: `OV_SIGNATUREBYTES = _PUB_N_BYTE` (no appended salt). The signature is the raw solution vector `w`. The salt is recovered from `P(w)` by the verifier.
+
+4. **External digest signing** (`ov_sign_digest()`): New API for signing an externally-provided perceptual hash (or any digest) directly, without internal SHAKE256 hashing. This preserves the verbatim bytes in the recovered digest, enabling fuzzy/similarity comparison.
+
+5. **Oversized digest rejection**: `ov_sign_digest()` returns `-2` if the provided digest exceeds `_HASH_EFFECTIVE_BYTE` bytes, preventing silent truncation that would make the full pHash unrecoverable.
+
+6. **User-provided salt** (`ov_sign_salt()`, `ov_sign_digest()` with salt parameter): Allows deterministic signing with a caller-specified salt (hashed to `_SALT_BYTE` bytes). Enables reproducible signatures for testing and application-specific nonces.
+
+7. **Digest verification** (`ov_verify_digest()`): New API for verifying a signature against an externally-provided digest, bypassing internal SHAKE256 hashing.
+
+8. **Message recovery via `ov_publicmap()`**: While not new code (the function existed upstream), the salt-in-digest architecture makes it useful: the verifier evaluates `P(w)` to recover the sender's perceptual hash verbatim from the first `_HASH_EFFECTIVE_BYTE` bytes.
+
 ### Files modified from upstream pqov
 
 | File | Changes |
 |------|---------|
 | `pqov/src/params.h` | Added `_OV256_50_20` (80-bit) and `_OV256_63_25` (100-bit) parameter definitions; salt-in-digest architecture (`OV_SIGNATUREBYTES = _PUB_N_BYTE`, `_HASH_EFFECTIVE_BYTE`); configurable `_SALT_BYTE` default 2 |
-| `pqov/src/ov.c` | Rewrote signing/verify for salt-in-digest; refactored into `_ov_sign_target()` core; added `ov_sign_salt()`, `ov_sign_digest()`, `ov_verify_digest()` |
+| `pqov/src/ov.c` | Rewrote signing/verify for salt-in-digest; refactored into `_ov_sign_target()` core; added `ov_sign_salt()`, `ov_sign_digest()`, `ov_verify_digest()`; **rejects oversized digests** (returns `-2` if `digest_len > _HASH_EFFECTIVE_BYTE`) to prevent silent truncation |
 | `pqov/src/ov.h` | Added `ov_sign_salt()`, `ov_sign_digest()`, `ov_verify_digest()` declarations |
 | `pqov/Makefile` | Added `PARAM=80`, `PARAM=100`, `SALT=` build variables; added `stego_demo` target |
 
