@@ -5,6 +5,10 @@
  * Works identically with UOV and BLS backends. The caller provides a pHash
  * and gets back a payload; on verification, recovers/extracts the pHash.
  *
+ * BLS supports two modes:
+ *   embed_phash=1: pHash is included in the payload (default).
+ *   embed_phash=0: pHash is omitted; must be provided at verification.
+ *
  * Build with:
  *   make stego_demo SCHEME=uov-80      (UOV, 80-bit, post-quantum)
  *   make stego_demo SCHEME=uov-100     (UOV, 100-bit, post-quantum)
@@ -48,7 +52,7 @@ int main(void) {
     printf("Security:         %d bits (classical)\n", stego_security_bits());
     printf("Post-quantum:     %s\n", stego_is_post_quantum() ? "Yes" : "No");
     printf("Message recovery: %s\n", stego_has_message_recovery()
-           ? "Yes (pHash recovered from sig)" : "No (pHash transmitted explicitly)");
+           ? "Yes (pHash recovered from sig)" : "No");
     printf("Signature:        %d bytes = %d bits\n", stego_sig_bytes(), stego_sig_bytes() * 8);
     printf("Public key:       %d bytes = %d bits\n", stego_pk_bytes(), stego_pk_bytes() * 8);
     printf("Max pHash:        %d bytes = %d bits\n", stego_max_phash_bytes(), stego_max_phash_bytes() * 8);
@@ -78,24 +82,48 @@ int main(void) {
     /* ============================================================ */
     printf("--- Step 2: Payload Sizes ---\n\n");
     int max_ph = stego_max_phash_bytes();
-    printf("  %-10s | %-14s | %-14s | %s\n", "pHash bits", "No PK (bits)", "With PK (bits)", "");
-    printf("  %s\n", "-----------|----------------|----------------|---");
-    for (int i = 0; i < NUM_PHASH; i++) {
-        int ph = PHASH_SIZES[i];
-        if (ph > max_ph) {
-            printf("  %-10d | %-14s | %-14s | REJECTED (max %d bits)\n",
-                   ph * 8, "N/A", "N/A", max_ph * 8);
-        } else {
-            printf("  %-10d | %-14d | %-14d |\n",
-                   ph * 8,
-                   stego_payload_bytes(ph, 0) * 8,
-                   stego_payload_bytes(ph, 1) * 8);
+    int has_mr = stego_has_message_recovery();
+
+    if (!has_mr) {
+        /* BLS: show both embed modes */
+        printf("  With pHash embedded:\n");
+        printf("  %-10s | %-14s | %-14s | %s\n", "pHash bits", "No PK (bits)", "With PK (bits)", "");
+        printf("  %s\n", "-----------|----------------|----------------|---");
+        for (int i = 0; i < NUM_PHASH; i++) {
+            int ph = PHASH_SIZES[i];
+            printf("  %-10d | %-14d | %-14d |\n", ph * 8,
+                   stego_payload_bytes(ph, 1, 0) * 8,
+                   stego_payload_bytes(ph, 1, 1) * 8);
+        }
+        printf("\n  Without pHash (pHash provided at verification):\n");
+        printf("  %-10s | %-14s | %-14s | %s\n", "pHash bits", "No PK (bits)", "With PK (bits)", "");
+        printf("  %s\n", "-----------|----------------|----------------|---");
+        for (int i = 0; i < NUM_PHASH; i++) {
+            int ph = PHASH_SIZES[i];
+            printf("  %-10d | %-14d | %-14d |\n", ph * 8,
+                   stego_payload_bytes(ph, 0, 0) * 8,
+                   stego_payload_bytes(ph, 0, 1) * 8);
+        }
+    } else {
+        /* UOV: single mode (message recovery) */
+        printf("  %-10s | %-14s | %-14s | %s\n", "pHash bits", "No PK (bits)", "With PK (bits)", "");
+        printf("  %s\n", "-----------|----------------|----------------|---");
+        for (int i = 0; i < NUM_PHASH; i++) {
+            int ph = PHASH_SIZES[i];
+            if (ph > max_ph) {
+                printf("  %-10d | %-14s | %-14s | REJECTED (max %d bits)\n",
+                       ph * 8, "N/A", "N/A", max_ph * 8);
+            } else {
+                printf("  %-10d | %-14d | %-14d |\n", ph * 8,
+                       stego_payload_bytes(ph, 1, 0) * 8,
+                       stego_payload_bytes(ph, 1, 1) * 8);
+            }
         }
     }
     printf("\n");
 
-    /* Allocate payload buffer large enough for any variant */
-    int max_payload = stego_payload_bytes(23, 1) + 64;
+    /* Allocate payload buffer */
+    int max_payload = stego_payload_bytes(23, 1, 1) + 64;
     uint8_t *payload = malloc(max_payload);
     uint8_t recovered[STEGO_MAX_PHASH_BYTES];
     int payload_len, recovered_len;
@@ -105,88 +133,132 @@ int main(void) {
     for (int i = 0; i < 23; i++) phash[i] = (uint8_t)(0xde + i * 0x11);
 
     /* ============================================================ */
-    /* Step 3: Sign & verify each pHash size (PK out-of-band)        */
+    /* Step 3: Sign & verify (pHash embedded, PK out-of-band)        */
     /* ============================================================ */
-    printf("--- Step 3: Sign & Verify (PK out-of-band) ---\n\n");
+    printf("--- Step 3: Sign & Verify (pHash embedded, PK out-of-band) ---\n\n");
 
     for (int i = 0; i < NUM_PHASH; i++) {
         int ph_len = PHASH_SIZES[i];
 
         rc = stego_sign(payload, &payload_len,
                         phash, ph_len, sk, sk_len,
-                        NULL, 0,   /* random salt / ignored */
+                        NULL, 0,    /* random salt */
+                        1,          /* embed pHash */
                         0, NULL, 0);
         if (rc != STEGO_OK) {
-            if (ph_len > stego_max_phash_bytes()) {
-                printf("  %3d-bit pHash: REJECTED (exceeds max %d bits, would be truncated)\n",
-                       ph_len * 8, stego_max_phash_bytes() * 8);
-            } else {
+            if (ph_len > max_ph)
+                printf("  %3d-bit pHash: REJECTED (exceeds max %d bits)\n", ph_len * 8, max_ph * 8);
+            else
                 printf("  %3d-bit pHash: SIGN FAILED\n", ph_len * 8);
-            }
             continue;
         }
 
         rc = stego_verify(payload, payload_len, ph_len,
-                          recovered, &recovered_len, pk, pk_len);
+                          recovered, &recovered_len,
+                          pk, pk_len,
+                          NULL, 0);  /* no expected_phash needed (embedded) */
 
         printf("  %3d-bit pHash: payload %3d bits, verify %s, recovered %d bits",
                ph_len * 8, payload_len * 8,
                rc == STEGO_OK ? "OK" : "FAIL",
                recovered_len * 8);
 
-        if (!stego_has_message_recovery()) {
-            /* BLS: recovered bytes ARE the raw pHash */
+        if (!has_mr) {
             int match = (rc == STEGO_OK) && (recovered_len == ph_len) &&
                         (memcmp(recovered, phash, ph_len) == 0);
             printf(", pHash match: %s", match ? "YES" : "NO");
         }
-        /* UOV: recovered bytes are H(pHash)[truncated], not raw pHash.
-         * The caller would compare against their own H(pHash). */
         printf("\n");
     }
     printf("\n");
 
     /* ============================================================ */
-    /* Step 4: Sign & verify with PK in-band                         */
+    /* Step 4: BLS without embedded pHash (pHash at verification)    */
     /* ============================================================ */
-    printf("--- Step 4: Sign & Verify (PK in-band) ---\n\n");
+    if (!has_mr) {
+        printf("--- Step 4: Sign & Verify (pHash NOT embedded, provided at verify) ---\n\n");
+
+        for (int i = 0; i < NUM_PHASH; i++) {
+            int ph_len = PHASH_SIZES[i];
+
+            rc = stego_sign(payload, &payload_len,
+                            phash, ph_len, sk, sk_len,
+                            NULL, 0,
+                            0,          /* do NOT embed pHash */
+                            0, NULL, 0);
+            if (rc != STEGO_OK) {
+                printf("  %3d-bit pHash: SIGN FAILED\n", ph_len * 8);
+                continue;
+            }
+
+            /* Verify WITH expected_phash */
+            rc = stego_verify(payload, payload_len, ph_len,
+                              recovered, &recovered_len,
+                              pk, pk_len,
+                              phash, ph_len);  /* provide expected pHash */
+
+            printf("  %3d-bit pHash: payload %3d bits, verify %s (pHash provided externally)\n",
+                   ph_len * 8, payload_len * 8,
+                   rc == STEGO_OK ? "OK" : "FAIL");
+
+            /* Verify WITHOUT expected_phash -- should return STEGO_ERR_NO_PHASH */
+            rc = stego_verify(payload, payload_len, ph_len,
+                              recovered, &recovered_len,
+                              pk, pk_len,
+                              NULL, 0);  /* no pHash available */
+
+            printf("  %3d-bit pHash: verify without pHash: %s (expected ERR_NO_PHASH)\n",
+                   ph_len * 8,
+                   rc == STEGO_ERR_NO_PHASH ? "ERR_NO_PHASH" :
+                   rc == STEGO_OK ? "OK (ERROR!)" : "other error");
+        }
+        printf("\n");
+    }
+
+    /* ============================================================ */
+    /* Step 5: Sign & verify with PK in-band                         */
+    /* ============================================================ */
+    printf("--- Step 5: Sign & Verify (PK in-band) ---\n\n");
 
     rc = stego_sign(payload, &payload_len,
                     phash, 18, sk, sk_len,
                     NULL, 0,
-                    1, pk, pk_len);  /* append PK */
+                    1,              /* embed pHash */
+                    1, pk, pk_len); /* append PK */
 
     if (rc == STEGO_OK) {
         printf("  Payload (with PK): %d bytes = %d bits\n", payload_len, payload_len * 8);
 
-        /* Verify using embedded PK */
         rc = stego_verify(payload, payload_len, 18,
-                          recovered, &recovered_len, NULL, 0);
+                          recovered, &recovered_len,
+                          NULL, 0,   /* use embedded PK */
+                          NULL, 0);
         printf("  Verify (embedded PK): %s\n", rc == STEGO_OK ? "VALID" : "INVALID");
 
-        /* Verify using external PK */
         rc = stego_verify(payload, payload_len, 18,
-                          recovered, &recovered_len, pk, pk_len);
+                          recovered, &recovered_len,
+                          pk, pk_len,
+                          NULL, 0);
         printf("  Verify (external PK): %s\n", rc == STEGO_OK ? "VALID" : "INVALID");
     }
     printf("\n");
 
     /* ============================================================ */
-    /* Step 5: Tamper detection                                      */
+    /* Step 6: Tamper detection                                      */
     /* ============================================================ */
-    printf("--- Step 5: Tamper Detection ---\n\n");
+    printf("--- Step 6: Tamper Detection ---\n\n");
 
     rc = stego_sign(payload, &payload_len,
-                    phash, 18, sk, sk_len, NULL, 0, 0, NULL, 0);
+                    phash, 18, sk, sk_len,
+                    NULL, 0, 1, 0, NULL, 0);
     if (rc == STEGO_OK) {
-        /* Verify original: get recovered hash */
         uint8_t orig_hash[STEGO_MAX_PHASH_BYTES];
         int orig_hash_len;
         rc = stego_verify(payload, payload_len, 18,
-                          orig_hash, &orig_hash_len, pk, pk_len);
+                          orig_hash, &orig_hash_len,
+                          pk, pk_len, NULL, 0);
         printf("  Original:  verify=%s\n", rc == STEGO_OK ? "OK" : "FAIL");
 
-        /* Tamper: flip one bit in payload */
         uint8_t *tampered = malloc(payload_len);
         memcpy(tampered, payload, payload_len);
         tampered[0] ^= 0x01;
@@ -194,16 +266,15 @@ int main(void) {
         uint8_t tamp_hash[STEGO_MAX_PHASH_BYTES];
         int tamp_hash_len;
         rc = stego_verify(tampered, payload_len, 18,
-                          tamp_hash, &tamp_hash_len, pk, pk_len);
+                          tamp_hash, &tamp_hash_len,
+                          pk, pk_len, NULL, 0);
 
-        if (stego_has_message_recovery()) {
-            /* UOV: tampered sig produces a different recovered hash */
+        if (has_mr) {
             int hash_changed = (orig_hash_len != tamp_hash_len ||
                                 memcmp(orig_hash, tamp_hash, orig_hash_len) != 0);
             printf("  Tampered:  recovered hash changed: %s (tamper detected)\n",
                    hash_changed ? "YES" : "NO (ERROR!)");
         } else {
-            /* BLS: verify returns FAIL for tampered payload */
             printf("  Tampered:  %s (expected INVALID)\n",
                    rc == STEGO_OK ? "VALID (ERROR!)" : "INVALID");
         }
@@ -212,24 +283,24 @@ int main(void) {
     printf("\n");
 
     /* ============================================================ */
-    /* Step 6: User-provided salt (UOV only)                         */
+    /* Step 7: User-provided salt (UOV only)                         */
     /* ============================================================ */
-    if (stego_has_message_recovery()) {
-        printf("--- Step 6: User-Provided Salt (UOV) ---\n\n");
+    if (has_mr) {
+        printf("--- Step 7: User-Provided Salt (UOV) ---\n\n");
 
         const char *salt_str = "image-id-2024";
         uint8_t *p1 = malloc(max_payload), *p2 = malloc(max_payload);
         int l1, l2;
 
         stego_sign(p1, &l1, phash, 18, sk, sk_len,
-                   (const uint8_t *)salt_str, strlen(salt_str), 0, NULL, 0);
+                   (const uint8_t *)salt_str, strlen(salt_str), 1, 0, NULL, 0);
         stego_sign(p2, &l2, phash, 18, sk, sk_len,
-                   (const uint8_t *)salt_str, strlen(salt_str), 0, NULL, 0);
+                   (const uint8_t *)salt_str, strlen(salt_str), 1, 0, NULL, 0);
         printf("  Same salt = same sig:      %s\n",
                (l1 == l2 && memcmp(p1, p2, l1) == 0) ? "YES" : "NO");
 
         stego_sign(p2, &l2, phash, 18, sk, sk_len,
-                   (const uint8_t *)"other", 5, 0, NULL, 0);
+                   (const uint8_t *)"other", 5, 1, 0, NULL, 0);
         printf("  Different salt = diff sig: %s\n",
                (l1 != l2 || memcmp(p1, p2, l1) != 0) ? "YES" : "NO");
 
@@ -246,24 +317,32 @@ int main(void) {
     printf("  Security:         %d bits (classical), %s\n",
            stego_security_bits(),
            stego_is_post_quantum() ? "post-quantum" : "NOT quantum-safe");
-    printf("  Message recovery: %s\n",
-           stego_has_message_recovery() ? "Yes" : "No");
+    printf("  Message recovery: %s\n", has_mr ? "Yes" : "No");
     printf("  Signature:        %d bits\n", stego_sig_bytes() * 8);
     printf("  Public key:       %d bits\n", stego_pk_bytes() * 8);
     printf("  Max pHash:        %d bits\n", stego_max_phash_bytes() * 8);
     printf("\n");
-    printf("  Payload sizes:\n");
+    printf("  Payload sizes (pHash embedded):\n");
     for (int i = 0; i < NUM_PHASH; i++) {
         int ph = PHASH_SIZES[i];
-        if (ph > stego_max_phash_bytes()) {
-            printf("    %3d-bit pHash: REJECTED (exceeds max %d bits)\n",
-                   ph * 8, stego_max_phash_bytes() * 8);
+        if (ph > max_ph) {
+            printf("    %3d-bit pHash: REJECTED (exceeds max %d bits)\n", ph * 8, max_ph * 8);
             continue;
         }
         printf("    %3d-bit pHash: %4d bits (no PK) / %4d bits (with PK)\n",
                ph * 8,
-               stego_payload_bytes(ph, 0) * 8,
-               stego_payload_bytes(ph, 1) * 8);
+               stego_payload_bytes(ph, 1, 0) * 8,
+               stego_payload_bytes(ph, 1, 1) * 8);
+    }
+    if (!has_mr) {
+        printf("  Payload sizes (pHash NOT embedded):\n");
+        for (int i = 0; i < NUM_PHASH; i++) {
+            int ph = PHASH_SIZES[i];
+            printf("    %3d-bit pHash: %4d bits (no PK) / %4d bits (with PK)\n",
+                   ph * 8,
+                   stego_payload_bytes(ph, 0, 0) * 8,
+                   stego_payload_bytes(ph, 0, 1) * 8);
+        }
     }
     printf("=================================================================\n");
 

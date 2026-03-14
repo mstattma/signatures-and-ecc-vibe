@@ -6,6 +6,9 @@
  * via the salt-in-digest technique. The payload contains only the
  * signature vector w (+ optional PK). The verifier recovers the
  * pHash by evaluating P(w).
+ *
+ * The embed_phash parameter is ignored (UOV always uses message recovery).
+ * The expected_phash parameter is ignored (pHash is always recovered from sig).
  */
 
 #include "stego_sig.h"
@@ -59,8 +62,9 @@ int stego_max_phash_bytes(void) {
 #endif
 }
 
-int stego_payload_bytes(int phash_len, int append_pk) {
-    (void)phash_len; /* pHash not transmitted for UOV (message recovery) */
+int stego_payload_bytes(int phash_len, int embed_phash, int append_pk) {
+    (void)phash_len;   /* pHash not transmitted for UOV (message recovery) */
+    (void)embed_phash; /* ignored for UOV */
     int total = OV_SIGNATUREBYTES;
     if (append_pk) total += CRYPTO_PUBLICKEYBYTES;
     return total;
@@ -92,10 +96,12 @@ int stego_sign(uint8_t *payload, int *payload_len,
                const uint8_t *phash, int phash_len,
                const uint8_t *sk, int sk_len,
                const uint8_t *salt, int salt_len,
+               int embed_phash,
                int append_pk,
                const uint8_t *pk, int pk_len)
 {
     (void)sk_len;
+    (void)embed_phash; /* UOV always uses message recovery */
 
     /* Reject pHash longer than the recoverable digest size */
     if (phash_len > stego_max_phash_bytes()) return STEGO_ERR;
@@ -130,9 +136,12 @@ int stego_sign(uint8_t *payload, int *payload_len,
 int stego_verify(const uint8_t *payload, int payload_len,
                  int phash_len,
                  uint8_t *recovered_phash, int *recovered_len,
-                 const uint8_t *ext_pk, int ext_pk_len)
+                 const uint8_t *ext_pk, int ext_pk_len,
+                 const uint8_t *expected_phash, int expected_phash_len)
 {
-    (void)phash_len; /* UOV doesn't need this to parse payload */
+    (void)phash_len;          /* UOV doesn't need this to parse payload */
+    (void)expected_phash;     /* UOV recovers pHash from sig, doesn't need expected */
+    (void)expected_phash_len;
 
     /* Parse payload: [signature (OV_SIGNATUREBYTES)] [|| PK] */
     if (payload_len < OV_SIGNATUREBYTES) return STEGO_ERR;
@@ -163,13 +172,6 @@ int stego_verify(const uint8_t *payload, int payload_len,
 #endif
     memcpy(recovered_phash, digest, hash_bytes);
     *recovered_len = hash_bytes;
-
-    /* The recovered hash portion is H(phash)[0..hash_bytes-1].
-     * The caller compares this against their own H(phash) to determine
-     * authenticity. We don't have the original phash here, so we can't
-     * do the full verification — but we CAN check that the signature
-     * is a valid preimage under the public map by verifying via
-     * ov_verify_digest if the caller provided the phash_len hint. */
 
     return STEGO_OK;
 }

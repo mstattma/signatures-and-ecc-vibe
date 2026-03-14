@@ -9,7 +9,7 @@
 #   make clean
 
 CC ?= gcc
-CFLAGS = -O2 -Wall -Wextra -std=c99
+CFLAGS = -O1 -Wall -Wextra -std=c99
 
 SCHEME ?= bls-bn158
 

@@ -2,19 +2,23 @@
 /**
  * stego_sig_bls.c - BLS backend for the unified stego signature API.
  *
- * BLS has no message recovery: the pHash and salt are prepended to the
- * signature in the payload. The BLS signature covers pHash || salt.
- * The salt ensures that similar images with identical pHashes produce
- * different signatures.
+ * BLS has no message recovery. Two payload modes:
+ *   embed_phash=1: [pHash || salt || signature] [|| PK]
+ *     pHash and salt are transmitted in the payload.
+ *   embed_phash=0: [salt || signature] [|| PK]
+ *     pHash is NOT in the payload; must be provided at verification.
  *
- * Payload format: [pHash || salt || signature] [|| PK]
+ * The BLS signature always covers (pHash || salt).
+ *
+ * Verification auto-detects whether pHash is embedded by comparing
+ * payload_len against the expected size for sig-only (salt + sig [+ PK]).
  */
 
 #include "stego_sig.h"
 #include <string.h>
 #include <relic.h>
 
-/* Salt length in bytes, matching BLS standalone default */
+/* Salt length in bytes */
 #ifndef BLS_SALT_BYTE
 #define BLS_SALT_BYTE 2
 #endif
@@ -53,7 +57,7 @@ int stego_has_message_recovery(void) { return 0; }
 int stego_is_post_quantum(void)      { return 0; }
 
 /* ------------------------------------------------------------------ */
-/* Size queries (use cached generator points)                          */
+/* Size queries                                                        */
 /* ------------------------------------------------------------------ */
 
 static int s_sig_bytes = 0;
@@ -78,12 +82,13 @@ static void cache_sizes(void) {
 int stego_sig_bytes(void) { cache_sizes(); return s_sig_bytes; }
 int stego_pk_bytes(void)  { cache_sizes(); return s_pk_bytes; }
 int stego_sk_bytes(void)  { cache_sizes(); return s_sk_bytes; }
-int stego_max_phash_bytes(void) { return 1024; } /* BLS: no limit (pHash transmitted verbatim) */
+int stego_max_phash_bytes(void) { return 1024; }
 
-int stego_payload_bytes(int phash_len, int append_pk) {
+int stego_payload_bytes(int phash_len, int embed_phash, int append_pk) {
     cache_sizes();
-    int total = phash_len + BLS_SALT_BYTE + s_sig_bytes;
-    if (append_pk) total += s_pk_bytes;
+    int total = BLS_SALT_BYTE + s_sig_bytes;
+    if (embed_phash) total += phash_len;
+    if (append_pk)   total += s_pk_bytes;
     return total;
 }
 
@@ -123,14 +128,11 @@ int stego_keygen(uint8_t *pk, int *pk_len, uint8_t *sk, int *sk_len) {
 
     RLC_TRY {
         bn_new(d); g2_new(q);
-
         if (cp_bls_gen(d, q) == RLC_OK) {
             *sk_len = bn_size_bin(d);
             bn_write_bin(sk, *sk_len, d);
-
             *pk_len = g2_size_bin(q, 1);
             g2_write_bin(pk, *pk_len, q, 1);
-
             result = STEGO_OK;
         }
     } RLC_CATCH_ANY {
@@ -150,11 +152,11 @@ int stego_sign(uint8_t *payload, int *payload_len,
                const uint8_t *phash, int phash_len,
                const uint8_t *sk, int sk_len,
                const uint8_t *salt, int salt_len,
+               int embed_phash,
                int append_pk,
                const uint8_t *pk, int pk_len)
 {
     /* Generate or derive salt */
-#if BLS_SALT_BYTE > 0
     uint8_t salt_actual[BLS_SALT_BYTE];
     if (salt && salt_len > 0) {
         uint8_t hash_out[RLC_MD_LEN];
@@ -164,17 +166,12 @@ int stego_sign(uint8_t *payload, int *payload_len,
         rand_bytes(salt_actual, BLS_SALT_BYTE);
     }
 
-    /* Build signing input: pHash || salt */
+    /* Build signing input: pHash || salt (signature always covers both) */
     uint8_t sign_input[1024];
     if ((size_t)phash_len + BLS_SALT_BYTE > sizeof(sign_input)) return STEGO_ERR;
     memcpy(sign_input, phash, phash_len);
     memcpy(sign_input + phash_len, salt_actual, BLS_SALT_BYTE);
     size_t sign_len = phash_len + BLS_SALT_BYTE;
-#else
-    (void)salt; (void)salt_len;
-    const uint8_t *sign_input = phash;
-    size_t sign_len = phash_len;
-#endif
 
     bn_t d;
     g1_t sig;
@@ -184,20 +181,19 @@ int stego_sign(uint8_t *payload, int *payload_len,
 
     RLC_TRY {
         bn_new(d); g1_new(sig);
-
         bn_read_bin(d, sk, sk_len);
 
         if (cp_bls_sig(sig, sign_input, sign_len, d) == RLC_OK) {
             int offset = 0;
 
-            /* Payload: [pHash || salt || signature || optional PK] */
-            memcpy(payload + offset, phash, phash_len);
-            offset += phash_len;
+            /* Payload: [optional pHash] || salt || signature || [optional PK] */
+            if (embed_phash) {
+                memcpy(payload + offset, phash, phash_len);
+                offset += phash_len;
+            }
 
-#if BLS_SALT_BYTE > 0
             memcpy(payload + offset, salt_actual, BLS_SALT_BYTE);
             offset += BLS_SALT_BYTE;
-#endif
 
             int sig_sz = g1_size_bin(sig, 1);
             g1_write_bin(payload + offset, sig_sz, sig, 1);
@@ -227,30 +223,72 @@ int stego_sign(uint8_t *payload, int *payload_len,
 int stego_verify(const uint8_t *payload, int payload_len,
                  int phash_len,
                  uint8_t *recovered_phash, int *recovered_len,
-                 const uint8_t *ext_pk, int ext_pk_len)
+                 const uint8_t *ext_pk, int ext_pk_len,
+                 const uint8_t *expected_phash, int expected_phash_len)
 {
     int sig_sz = stego_sig_bytes();
-    int pk_sz = stego_pk_bytes();
+    int pk_sz  = stego_pk_bytes();
 
-    /* Parse payload: [pHash (phash_len)] [salt (BLS_SALT_BYTE)] [signature (sig_sz)] [optional PK] */
-    int min_len = phash_len + BLS_SALT_BYTE + sig_sz;
-    if (payload_len < min_len) return STEGO_ERR;
+    /* Determine whether pHash is embedded by checking payload length.
+     *
+     * Without pHash: payload = [salt (BLS_SALT_BYTE)] [sig] [optional PK]
+     *   min_no_phash = BLS_SALT_BYTE + sig_sz
+     *
+     * With pHash:    payload = [pHash (phash_len)] [salt] [sig] [optional PK]
+     *   min_with_phash = phash_len + BLS_SALT_BYTE + sig_sz
+     *
+     * We detect by checking: if payload_len >= min_with_phash, pHash is embedded.
+     * If payload_len >= min_no_phash but < min_with_phash, no pHash.
+     * (This works because phash_len > 0 always.) */
 
+    int min_no_phash   = BLS_SALT_BYTE + sig_sz;
+    int min_with_phash = phash_len + BLS_SALT_BYTE + sig_sz;
+
+    int phash_embedded;
+    if (payload_len >= min_with_phash) {
+        phash_embedded = 1;
+    } else if (payload_len >= min_no_phash) {
+        phash_embedded = 0;
+    } else {
+        return STEGO_ERR;
+    }
+
+    const uint8_t *phash_data;
+    const uint8_t *salt_data;
+    const uint8_t *sig_data;
     int offset = 0;
-    const uint8_t *phash = payload + offset;
-    offset += phash_len;
 
-#if BLS_SALT_BYTE > 0
-    const uint8_t *salt_data = payload + offset;
+    if (phash_embedded) {
+        phash_data = payload + offset;
+        offset += phash_len;
+    } else {
+        phash_data = NULL;
+    }
+
+    salt_data = payload + offset;
     offset += BLS_SALT_BYTE;
-#endif
 
-    const uint8_t *sig_data = payload + offset;
+    sig_data = payload + offset;
     offset += sig_sz;
 
-    /* Extract pHash */
-    memcpy(recovered_phash, phash, phash_len);
-    *recovered_len = phash_len;
+    /* Resolve the pHash: embedded, expected, or error */
+    const uint8_t *verify_phash;
+    int verify_phash_len;
+
+    if (phash_embedded) {
+        verify_phash = phash_data;
+        verify_phash_len = phash_len;
+    } else if (expected_phash && expected_phash_len > 0) {
+        verify_phash = expected_phash;
+        verify_phash_len = expected_phash_len;
+    } else {
+        /* No pHash available from either source */
+        return STEGO_ERR_NO_PHASH;
+    }
+
+    /* Return the pHash to the caller */
+    memcpy(recovered_phash, verify_phash, verify_phash_len);
+    *recovered_len = verify_phash_len;
 
     /* Determine PK source */
     const uint8_t *pk_data;
@@ -266,16 +304,11 @@ int stego_verify(const uint8_t *payload, int payload_len,
     }
 
     /* Reconstruct signing input: pHash || salt */
-#if BLS_SALT_BYTE > 0
     uint8_t verify_input[1024];
-    if ((size_t)phash_len + BLS_SALT_BYTE > sizeof(verify_input)) return STEGO_ERR;
-    memcpy(verify_input, phash, phash_len);
-    memcpy(verify_input + phash_len, salt_data, BLS_SALT_BYTE);
-    size_t verify_len = phash_len + BLS_SALT_BYTE;
-#else
-    const uint8_t *verify_input = phash;
-    size_t verify_len = phash_len;
-#endif
+    if ((size_t)verify_phash_len + BLS_SALT_BYTE > sizeof(verify_input)) return STEGO_ERR;
+    memcpy(verify_input, verify_phash, verify_phash_len);
+    memcpy(verify_input + verify_phash_len, salt_data, BLS_SALT_BYTE);
+    size_t verify_len = verify_phash_len + BLS_SALT_BYTE;
 
     /* Verify BLS signature */
     g1_t s;
@@ -286,7 +319,6 @@ int stego_verify(const uint8_t *payload, int payload_len,
 
     RLC_TRY {
         g1_new(s); g2_new(q);
-
         g1_read_bin(s, sig_data, sig_sz);
         g2_read_bin(q, pk_data, pk_data_len);
 
