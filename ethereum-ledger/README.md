@@ -28,9 +28,37 @@ npx hardhat run scripts/demo.js --network hardhat
 
 This deploys fresh contracts in a temporary Hardhat VM, runs the full demo, and exits. State is lost after the script finishes. Good for quick smoke tests.
 
-### Local Testing (persistent, multi-session)
+### Local Testing with Docker (recommended)
 
-For interactive/user testing where state persists across multiple script runs:
+The easiest way to run a persistent local node is via Docker. The container starts a Hardhat node, auto-deploys all contracts, and exports `deployment.json` to the host.
+
+```bash
+# From the project root:
+docker compose up -d           # Start in background
+docker compose logs -f node    # Follow logs (see deployment output)
+```
+
+The node is available at `http://localhost:8545`. Contracts are auto-deployed on startup. `deployment.json` is written to `ethereum-ledger/` on the host.
+
+Run scripts against the containerized node:
+```bash
+cd ethereum-ledger
+npx hardhat run scripts/demo.js --network localhost
+npx hardhat run scripts/demo.js --network localhost   # state persists!
+```
+
+Manage the container:
+```bash
+docker compose down            # Stop and remove
+docker compose up -d           # Restart (fresh state, re-deploys)
+docker compose logs -f node    # Watch logs
+```
+
+**Note:** Container state is in-memory. `docker compose down` + `up` resets everything (new contract addresses). The `deployment.json` on the host is updated automatically on each restart.
+
+### Local Testing without Docker (manual)
+
+If you prefer not to use Docker, start the Hardhat node manually:
 
 **Terminal 1** — start the local blockchain node:
 ```bash
@@ -44,12 +72,9 @@ This starts a JSON-RPC server at `http://127.0.0.1:8545` with 20 pre-funded test
 npx hardhat run scripts/deploy.js --network localhost
 ```
 
-This deploys KeyRegistry, CrossChainBloomFilter (and ImageAuthResolver on testnet), saves all addresses to `deployment.json`, and authorizes the deployer on the Bloom filter.
-
 **Terminal 2** — run the demo (as many times as you want):
 ```bash
 npx hardhat run scripts/demo.js --network localhost
-npx hardhat run scripts/demo.js --network localhost   # state persists!
 ```
 
 The demo reads contract addresses from `deployment.json` and reuses the deployed contracts. Each run registers a new key and image, and the Bloom filter accumulates entries across runs. If `deployment.json` is stale (node restarted), the demo detects this and falls back to fresh deployment.
@@ -98,17 +123,22 @@ Steps:
 ```
 ethereum-ledger/
 ├── README.md                   # This file
-├── hardhat.config.js           # Hardhat config (localhost, baseSepolia)
+├── Dockerfile                  # Hardhat node container (auto-deploys on startup)
+├── entrypoint.sh               # Container entrypoint (start node + deploy)
+├── hardhat.config.js           # Hardhat config (localhost, baseSepolia, localNova)
 ├── package.json                # Dependencies
 ├── .env.example                # Template for private key and contract addresses
 ├── .gitignore                  # Excludes node_modules, artifacts, .env, deployment.json
+├── .dockerignore               # Excludes node_modules from Docker build context
 ├── contracts/
 │   ├── KeyRegistry.sol         # Signing key lifecycle management
 │   ├── CrossChainBloomFilter.sol  # Cross-chain duplicate detection
 │   └── ImageAuthResolver.sol   # EAS resolver (uniqueness + key check + Bloom + index)
 └── scripts/
     ├── deploy.js               # Deploy all contracts, register EAS schema, save deployment.json
-    └── demo.js                 # End-to-end BLS-BN158 demo (local or testnet)
+    ├── demo.js                 # End-to-end BLS-BN158 demo (local or testnet)
+    ├── health-check.js         # Simple node health check
+    └── export-abis.js          # Export ABIs for Scaffold-ETH 2 UI
 ```
 
 ## Hardhat Network Modes

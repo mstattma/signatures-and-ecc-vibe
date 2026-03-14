@@ -1,0 +1,32 @@
+# Docker Compose for local development
+#
+# Usage:
+#   docker compose up              # Start Hardhat node + auto-deploy contracts
+#   docker compose up -d           # Start in background
+#   docker compose logs -f node    # Follow node logs
+#   docker compose down            # Stop everything
+#
+# The Hardhat node is available at http://localhost:8545
+# Contracts are auto-deployed on startup.
+# deployment.json is written to ethereum-ledger/deployment.json on the host.
+#
+# Run scripts against the running node:
+#   cd ethereum-ledger
+#   npx hardhat run scripts/demo.js --network localhost
+
+services:
+  node:
+    build:
+      context: ./ethereum-ledger
+      dockerfile: Dockerfile
+    ports:
+      - "8545:8545"
+    volumes:
+      # Mount the scripts dir so deployment.json is written to the host
+      - ./ethereum-ledger:/host
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8545', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',method:'eth_blockNumber',params:[],id:1})}).then(r=>r.json()).then(d=>{if(d.result)process.exit(0);process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
