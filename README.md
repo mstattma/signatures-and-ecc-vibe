@@ -66,6 +66,7 @@ For BLS, the pHash can be omitted from the payload (e.g., looked up from a ledge
 - [BLS Implementation](BLS/) -- Classical BLS signatures (BN-P158 and BLS12-381)
 - [Scheme Comparison](docs/scheme-comparison.md) -- Analysis of all PQC signature candidates considered
 - [Ethereum Ledger Proposal](docs/ethereum-ledger-proposal.md) -- EAS-based on-chain registration with gas cost analysis
+- [Video Extension](docs/video-extension.md) -- Merkle tree approach for authenticating video with per-interval tamper detection
 
 ## Architecture
 
