@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { useScaffoldReadContract, useScaffoldWriteContract } from "~~/hooks/scaffold-eth";
 
 const SCHEME_NAMES: Record<number, string> = {
@@ -43,7 +44,14 @@ function KeyRow({ user, index }: { user: string; index: number }) {
 }
 
 export function KeyList() {
+  const searchParams = useSearchParams();
   const [queryAddress, setQueryAddress] = useState("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+
+  // Read address from URL query parameter (?address=0x...)
+  useEffect(() => {
+    const addr = searchParams.get("address");
+    if (addr) setQueryAddress(addr);
+  }, [searchParams]);
   const [newPK, setNewPK] = useState("");
   const [newScheme, setNewScheme] = useState(2); // BLS-BN158 default
   const [revokeIndex, setRevokeIndex] = useState("");
