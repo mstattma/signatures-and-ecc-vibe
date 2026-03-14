@@ -71,43 +71,65 @@ async function main() {
 
   let keyRegistry, bloomFilter, resolver, schemaUID, eas;
 
-  if (isLocal) {
-    // Deploy everything locally for testing
-    console.log("--- Local deployment ---");
-    
-    // Deploy a minimal EAS mock for local testing
-    // We'll deploy our contracts with address(0) for EAS (skip resolver EAS integration)
-    // and test the key registry + bloom filter + attestation encoding directly
-    
+  // Try to use existing deployed contracts (from deployment.json or env)
+  // Verify the contracts actually exist at the addresses (handles ephemeral hardhat restarts)
+  let hasDeployedContracts = KEY_REGISTRY && BLOOM_FILTER;
+  if (hasDeployedContracts) {
+    const code = await ethers.provider.getCode(KEY_REGISTRY);
+    if (code === "0x") {
+      console.log("  deployment.json found but contracts not deployed at addresses (stale?).");
+      console.log("  Falling back to fresh deployment.\n");
+      hasDeployedContracts = false;
+    }
+  }
+
+  if (hasDeployedContracts) {
+    // Reuse contracts from a previous deploy (works for localhost, testnet, etc.)
+    console.log("--- Using deployed contracts ---");
+    keyRegistry = await ethers.getContractAt("KeyRegistry", KEY_REGISTRY);
+    bloomFilter = await ethers.getContractAt("CrossChainBloomFilter", BLOOM_FILTER);
+
+    if (RESOLVER && RESOLVER !== ethers.ZeroAddress) {
+      resolver = await ethers.getContractAt("ImageAuthResolver", RESOLVER);
+      console.log("  Resolver:", RESOLVER);
+    }
+    schemaUID = SCHEMA_UID;
+
+    console.log("  KeyRegistry:", KEY_REGISTRY);
+    console.log("  BloomFilter:", BLOOM_FILTER);
+    if (schemaUID && schemaUID !== ethers.ZeroHash) {
+      console.log("  Schema UID:", schemaUID);
+    }
+    if (isLocal) {
+      console.log("  (Local network: EAS attestation skipped, testing contracts directly)");
+    }
+    console.log("");
+  } else if (isLocal) {
+    // No deployment.json and on local network: deploy fresh for ephemeral testing
+    console.log("--- No deployment.json found, deploying fresh (ephemeral) ---");
+    console.log("  Tip: run 'npx hardhat run scripts/deploy.js --network localhost'");
+    console.log("  first for persistent local testing.\n");
+
     const KR = await ethers.getContractFactory("KeyRegistry");
     keyRegistry = await KR.deploy();
     await keyRegistry.waitForDeployment();
-    console.log("KeyRegistry:", await keyRegistry.getAddress());
+    console.log("  KeyRegistry:", await keyRegistry.getAddress());
 
     const BF = await ethers.getContractFactory("CrossChainBloomFilter");
     bloomFilter = await BF.deploy();
     await bloomFilter.waitForDeployment();
-    console.log("BloomFilter:", await bloomFilter.getAddress());
+    console.log("  BloomFilter:", await bloomFilter.getAddress());
 
-    // For local testing, we skip the EAS attestation (no EAS on hardhat)
-    // and test the contracts directly
-    console.log("(Skipping EAS attestation on local network - testing contracts directly)\n");
+    // Authorize the signer to add to bloom filter
+    const authTx = await bloomFilter.authorizeAdder(signer.address);
+    await authTx.wait();
+    console.log("  (Deployed fresh, EAS skipped)\n");
   } else {
-    // Use deployed contracts on testnet
-    if (!KEY_REGISTRY || !BLOOM_FILTER || !RESOLVER || !SCHEMA_UID) {
-      console.error("Missing contract addresses. Run deploy.js first and set env vars.");
-      console.error("Required: KEY_REGISTRY, BLOOM_FILTER, RESOLVER, SCHEMA_UID");
-      process.exit(1);
-    }
-    keyRegistry = await ethers.getContractAt("KeyRegistry", KEY_REGISTRY);
-    bloomFilter = await ethers.getContractAt("CrossChainBloomFilter", BLOOM_FILTER);
-    resolver = await ethers.getContractAt("ImageAuthResolver", RESOLVER);
-    console.log("Using deployed contracts");
-    console.log("  KeyRegistry:", KEY_REGISTRY);
-    console.log("  BloomFilter:", BLOOM_FILTER);
-    console.log("  Resolver:", RESOLVER);
-    console.log("  Schema UID:", SCHEMA_UID);
-    console.log("");
+    console.error("Missing contract addresses. Run deploy.js first.");
+    console.error("  For localhost: npx hardhat run scripts/deploy.js --network localhost");
+    console.error("  For testnet:   npx hardhat run scripts/deploy.js --network baseSepolia");
+    console.error("Alternatively set env vars: KEY_REGISTRY, BLOOM_FILTER, RESOLVER, SCHEMA_UID");
+    process.exit(1);
   }
 
   // ============================================================
