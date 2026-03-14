@@ -16,12 +16,12 @@ The signature is embedded steganographically in the image. The receiver extracts
 
 ## Implementations
 
-| Directory | Scheme | Sig (bits) | PK (bits) | Payload Size | Classical Security | Quantum Security | Status |
-|-----------|--------|-----------|----------|-------------|-------------------|-----------------|--------|
-| [UOV/](UOV/) | Oil and Vinegar (80-bit) | 400 | 204,000 | 400 bits (sig only, pHash recovered) | 80 bits | ~40-48 bits (est.) | Working prototype |
-| [UOV/](UOV/) | Oil and Vinegar (100-bit) | 504 | 403,200 | 504 bits (sig only, pHash recovered) | 100 bits | ~50-60 bits (est.) | Working prototype |
-| [BLS/](BLS/) | BLS (BN-P158) | 168 | 328 | 280-368 bits (pHash + salt + sig, no PK) | ~78 bits | 0 (broken by Shor) | Working prototype |
-| [BLS/](BLS/) | BLS (BLS12-381) | 392 | 776 | 504-592 bits (pHash + salt + sig, no PK) | ~117-120 bits | 0 (broken by Shor) | Working prototype |
+| Directory | Scheme | Sig (bits) | PK (bits) | SK (bits) | Payload Size | Classical Security | Quantum Security | Status |
+|-----------|--------|-----------|----------|----------|-------------|-------------------|-----------------|--------|
+| [UOV/](UOV/) | Oil and Vinegar (80-bit) | 400 | 204,000 | 175,456 | 400 bits (sig only, pHash recovered) | 80 bits | ~40-48 bits (est.) | Working prototype |
+| [UOV/](UOV/) | Oil and Vinegar (100-bit) | 504 | 403,200 | 346,056 | 504 bits (sig only, pHash recovered) | 100 bits | ~50-60 bits (est.) | Working prototype |
+| [BLS/](BLS/) | BLS (BN-P158) | 168 | 328 | 160 | 280-368 bits (pHash + salt + sig, no PK) | ~78 bits | 0 (broken by Shor) | Working prototype |
+| [BLS/](BLS/) | BLS (BLS12-381) | 392 | 776 | 256 | 504-592 bits (pHash + salt + sig, no PK) | ~117-120 bits | 0 (broken by Shor) | Working prototype |
 
 ## Unified API
 
