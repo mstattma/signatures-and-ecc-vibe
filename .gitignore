@@ -13,3 +13,6 @@ massif.out.*
 BLS/build-*/
 BLS/stego_demo
 BLS/size_test_*
+
+# Unified build artifacts
+unified/stego_demo
