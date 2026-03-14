@@ -12,13 +12,13 @@ const Debug: NextPage = () => {
     <>
       <DebugContracts />
       <div className="text-center mt-8 bg-secondary p-10">
-        <h1 className="text-4xl my-0">Debug Contracts</h1>
+        <h1 className="text-4xl my-0">Image Authentication Ledger</h1>
         <p className="text-neutral">
-          You can debug & interact with your deployed contracts here.
-          <br /> Check{" "}
-          <code className="italic bg-base-300 text-base font-bold [word-spacing:-0.5rem] px-1">
-            packages / nextjs / app / debug / page.tsx
-          </code>{" "}
+          Interact with the on-chain contracts for image authentication.
+          <br />
+          <strong>KeyRegistry</strong>: Register, rotate, and revoke stego signing keys.
+          <br />
+          <strong>CrossChainBloomFilter</strong>: Check and manage cross-chain duplicate detection.
         </p>
       </div>
     </>
