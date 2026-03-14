@@ -378,6 +378,181 @@ int stego_merkle_verify(const uint8_t *root, int root_len,
 
 The signing and verification flows remain the same — `stego_sign()` signs the Merkle root as if it were a pHash, and `stego_verify()` recovers/verifies the Merkle root. The Merkle-specific logic is a layer above the signature layer.
 
+## Live Streaming: Incremental Merkle Tree with Periodic Signing
+
+For pre-recorded video, the full Merkle tree is built after all intervals are known, the root is signed once, and the signature is embedded before publishing. For **live streaming**, the video isn't finished when embedding begins — intervals arrive over time.
+
+### Incremental Merkle Tree
+
+An incremental (append-only) Merkle tree allows leaves to be added one at a time, with the root updated after each insertion. The tree maintains a **frontier** — one hash per tree level representing the "right edge" of the tree so far:
+
+```
+After 4 leaves:         After 5 leaves:         Frontier state (5 leaves):
+      root                    ?
+     /    \                 /   \                 depth 2: h(0-3)  (complete subtree)
+   h01    h23             h01   h23               depth 0: l4      (pending leaf)
+   / \    / \            / \    / \
+  l0 l1  l2 l3         l0 l1  l2 l3  l4
+```
+
+The frontier requires only `ceil(log2(N))` hashes of state (~416 bytes for N up to 8192 intervals). The current root can be computed at any time by hashing the frontier elements together.
+
+### Periodic Signing with Configurable Maximum Delay
+
+Rather than signing after every interval (expensive) or only at the end (no real-time verification), we sign the **intermediate Merkle root** every M intervals, with a configurable maximum delay `max_delay_ms`:
+
+```
+M = configurable batch size (e.g., 60 intervals)
+max_delay_ms = maximum wall-clock time between signatures (e.g., 60000 ms = 1 minute)
+
+For each new interval:
+  1. Compute pHash of interval
+  2. Append leaf to incremental Merkle tree
+  3. If (intervals_since_last_sign >= M) OR (time_since_last_sign >= max_delay_ms):
+       a. Compute current intermediate root R_k
+       b. Sign R_k: sig_k = stego_sign(sk, R_k)
+       c. Embed sig_k in upcoming video frames
+       d. Store (R_k, sig_k, interval_range, frontier_state) as checkpoint
+       e. Reset counters
+```
+
+With variable-length intervals (e.g., scene-based), the `max_delay_ms` ensures signatures happen at a bounded wall-clock rate even if intervals are long.
+
+### Checkpoint Chain
+
+Each signed checkpoint references the previous one, forming a chain:
+
+```
+Checkpoint 0: { root_0, sig_0, intervals: [0..M-1], prev: null }
+        │
+        ▼
+Checkpoint 1: { root_1, sig_1, intervals: [0..2M-1], prev: root_0 }
+        │
+        ▼
+Checkpoint K: { root_K, sig_K, intervals: [0..N-1], prev: root_{K-1} }  ← final
+```
+
+Each intermediate root `root_k` commits to ALL intervals `[0..k*M-1]` seen so far (not just the latest batch), because the incremental tree is append-only. This means:
+
+- A verifier with checkpoint K can verify ANY interval from 0 to K*M-1
+- Earlier checkpoints are subsumed by later ones
+- The final checkpoint (after stream ends) is equivalent to the full Merkle tree root
+
+### Cost Impact
+
+**The key insight: only the final checkpoint needs on-chain registration.** Intermediate checkpoints are embedded in the video and stored on IPFS, providing real-time verification during streaming without incurring on-chain gas.
+
+#### On-chain cost: same as pre-recorded video
+
+| Component | Cost | Frequency |
+|---|---|---|
+| Final root registration (hybrid) | ~$0.07 | Once, after stream ends |
+| Final root registration (on-chain) | ~$0.13-0.17 | Once, after stream ends |
+| Key registration | ~$0.12-0.14 | Once per key rotation (not per video) |
+
+**Total on-chain cost per video: ~$0.07 (hybrid) or ~$0.13-0.17 (fully on-chain)** — identical to pre-recorded video and still images.
+
+#### Off-chain storage cost
+
+The streaming variant stores additional data: checkpoint signatures and frontier states.
+
+| Component | Size per checkpoint | Notes |
+|---|---|---|
+| Intermediate signature | 21-63 bytes | Same as the main signature |
+| Intermediate root | 32 bytes | SHA-256 |
+| Interval range | 8 bytes | Start and end interval indices |
+| Frontier state | ~416 bytes (max) | `log2(N)` hashes |
+| **Total per checkpoint** | **~480-520 bytes** | |
+
+For a 1-hour stream at 5-second intervals (N=720) with M=60 (sign every 5 minutes):
+
+| Parameter | Value |
+|---|---|
+| Intervals | 720 |
+| Checkpoints | 12 |
+| Checkpoint data | 12 × ~500 B = ~6 KB |
+| Full metadata (all proofs) | ~260 KB (same as pre-recorded) |
+| Checkpoint overhead | **~2.3% of total metadata** |
+
+The checkpoint overhead is negligible.
+
+#### Cost comparison by signing frequency
+
+For a 1-hour stream at 5-second intervals (N=720):
+
+| Signing interval | Max delay | Checkpoints | IPFS overhead | On-chain cost |
+|---|---|---|---|---|
+| Every interval (M=1) | 5 sec | 720 | ~360 KB | $0.07 (final only) |
+| Every 1 min (M=12) | 1 min | 60 | ~30 KB | $0.07 (final only) |
+| Every 5 min (M=60) | 5 min | 12 | ~6 KB | $0.07 (final only) |
+| Every 10 min (M=120) | 10 min | 6 | ~3 KB | $0.07 (final only) |
+| End of stream only | N/A | 1 | ~500 B | $0.07 |
+
+**Signing frequency has zero impact on on-chain cost** (only the final root is registered). It only affects IPFS storage (negligible) and real-time verification latency (how soon a live viewer can verify).
+
+### Real-Time Verification During Streaming
+
+A viewer watching a live stream can verify authenticity in near-real-time:
+
+```
+1. Extract latest embedded signature from video frame
+2. Recover intermediate root R_k
+3. Fetch checkpoint metadata from IPFS or streaming sideband
+4. Compute pHash of recent intervals
+5. Verify against R_k using Merkle proofs from checkpoint
+```
+
+The verification latency is bounded by `max_delay_ms` — the viewer knows the content is authentic up to the most recent signed checkpoint. Any tampering between the last checkpoint and the current playback position is not yet detectable, but will be caught at the next checkpoint.
+
+### Post-Stream Finalization
+
+After the stream ends:
+
+```
+1. Compute final Merkle root (from the incremental tree)
+2. Sign the final root
+3. Register on the ledger (one attestation)
+4. Upload full metadata to IPFS:
+   - All pHashes with interval metadata
+   - Full Merkle tree (all proofs)
+   - All checkpoint signatures (for historical verification)
+5. Revoke intermediate checkpoints (optional — they're subsumed by the final root)
+```
+
+The final root subsumes all intermediate checkpoints. A verifier who encounters the video post-stream uses the final root and full Merkle tree, identical to the pre-recorded video flow.
+
+### Streaming API Extension
+
+```c
+/* Incremental Merkle tree state (opaque) */
+typedef struct stego_merkle_inc stego_merkle_inc_t;
+
+/* Create a new incremental Merkle tree */
+stego_merkle_inc_t *stego_merkle_inc_new(int max_depth, int phash_len);
+
+/* Append a new interval leaf */
+int stego_merkle_inc_append(stego_merkle_inc_t *tree,
+                            const uint8_t *phash, int phash_len,
+                            uint64_t start_ms, uint64_t end_ms);
+
+/* Get the current intermediate root */
+int stego_merkle_inc_root(const stego_merkle_inc_t *tree,
+                          uint8_t *root_out, int *root_len);
+
+/* Get a Merkle proof for any interval added so far */
+int stego_merkle_inc_proof(const stego_merkle_inc_t *tree,
+                           int interval_index,
+                           uint8_t *proof_out, int *proof_len);
+
+/* Finalize: compute final root, export full tree */
+int stego_merkle_inc_finalize(stego_merkle_inc_t *tree,
+                              uint8_t *root_out, int *root_len,
+                              uint8_t *tree_out, int *tree_len);
+
+/* Free */
+void stego_merkle_inc_free(stego_merkle_inc_t *tree);
+```
+
 ## Open Questions
 
 1. **Interval granularity**: What is the right default interval length? 1 second provides fine-grained tamper detection but large metadata. 5 seconds is a good balance. Scene-based intervals (one pHash per scene change) would be most efficient but require scene detection.
@@ -387,5 +562,3 @@ The signing and verification flows remain the same — `stego_sign()` signs the 
 3. **Audio authentication**: The current design only covers the visual track. Audio could be authenticated similarly — perceptual hash of audio segments, included as additional leaves in the Merkle tree.
 
 4. **Re-encoding resilience**: Video re-encoding (transcoding) changes pixel values in every frame, which will change pHashes. The perceptual hash must be robust to common re-encoding parameters (bitrate changes, codec changes). This needs empirical testing per pHash algorithm.
-
-5. **Streaming**: For live-streamed video, the full Merkle tree can't be built upfront (the video isn't finished yet). Options include: hash chains (each interval signs the previous hash || current pHash), incremental Merkle trees, or batched signing (sign every M intervals).
