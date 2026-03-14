@@ -34,6 +34,36 @@ const RESOLVER = process.env.RESOLVER || deploymentAddrs.resolver || "";
 const SCHEMA_UID = process.env.SCHEMA_UID || deploymentAddrs.schemaUID || "";
 const EAS_ADDRESS = "0x4200000000000000000000000000000000000021";
 
+// Gas cost estimation
+// These are approximate L2 costs (gas price * ETH price).
+// On L2 rollups, the actual cost also includes L1 data posting fees,
+// but for estimation purposes we use a simple gas_used * cost_per_gas model.
+const ETH_PRICE_USD = parseFloat(process.env.ETH_PRICE_USD || "3000");
+const L2_GAS_PRICE_GWEI = parseFloat(process.env.L2_GAS_PRICE_GWEI || "0.01"); // Base/Optimism ~0.01 gwei
+const L1_GAS_PRICE_GWEI = parseFloat(process.env.L1_GAS_PRICE_GWEI || "30");   // Ethereum L1
+
+function gasToUSD(gasUsed, network) {
+  let gasPriceGwei;
+  if (network === "l1") {
+    gasPriceGwei = L1_GAS_PRICE_GWEI;
+  } else {
+    // L2 (Base, Optimism, Nova)
+    gasPriceGwei = L2_GAS_PRICE_GWEI;
+  }
+  const costETH = (Number(gasUsed) * gasPriceGwei) / 1e9;
+  const costUSD = costETH * ETH_PRICE_USD;
+  return costUSD;
+}
+
+function formatGas(gasUsed) {
+  const usdL2 = gasToUSD(gasUsed, "l2");
+  const usdL1 = gasToUSD(gasUsed, "l1");
+  if (usdL2 < 0.001) {
+    return `${gasUsed} gas (~$${usdL2.toExponential(1)} on L2, ~$${usdL1.toFixed(2)} on L1)`;
+  }
+  return `${gasUsed} gas (~$${usdL2.toFixed(4)} on L2, ~$${usdL1.toFixed(2)} on L1)`;
+}
+
 // Simulated BLS-BN158 key pair and signature
 // In production these come from the C library (unified-api SCHEME=bls-bn158)
 function simulateBLS() {
@@ -144,7 +174,7 @@ async function main() {
 
   const regTx = await keyRegistry.registerKey(pk, SCHEME_BLS_BN158);
   const regReceipt = await regTx.wait();
-  console.log("  Key registered! Gas used:", regReceipt.gasUsed.toString());
+  console.log("  Key registered!", formatGas(regReceipt.gasUsed));
 
   // Verify key is valid
   const isValid = await keyRegistry.isKeyCurrentlyValid(pk);
@@ -218,7 +248,7 @@ async function main() {
     await authTx.wait();
     const addTx = await bloomFilter.add(pHashSaltKey);
     const addReceipt = await addTx.wait();
-    console.log("  Added to Bloom filter. Gas:", addReceipt.gasUsed.toString());
+    console.log("  Added to Bloom filter.", formatGas(addReceipt.gasUsed));
 
     // Encode the attestation data as it would be on-chain
     const attestationData = ethers.AbiCoder.defaultAbiCoder().encode(
@@ -260,7 +290,7 @@ async function main() {
       },
     });
     const attestReceipt = await attestTx.wait();
-    console.log("  Attestation created! Gas used:", attestReceipt.gasUsed.toString());
+    console.log("  Attestation created!", formatGas(attestReceipt.gasUsed));
 
     // Get the attestation UID from the event
     const attestedEvent = attestReceipt.logs.find(l => l.topics.length > 0);
@@ -367,6 +397,9 @@ async function main() {
   console.log("  PK: NOT in payload (loaded from ledger)");
   console.log("  Key lifecycle: tracked on KeyRegistry with validity windows");
   console.log("  Duplicate detection: Bloom filter (cross-chain) + per-chain index");
+  console.log("");
+  console.log("  Cost assumptions: ETH = $" + ETH_PRICE_USD + ", L2 gas = " + L2_GAS_PRICE_GWEI + " gwei, L1 gas = " + L1_GAS_PRICE_GWEI + " gwei");
+  console.log("  Override with: ETH_PRICE_USD=... L2_GAS_PRICE_GWEI=... L1_GAS_PRICE_GWEI=...");
   console.log("=================================================================");
 }
 
