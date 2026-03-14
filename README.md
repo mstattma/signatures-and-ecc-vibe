@@ -16,22 +16,25 @@ The signature is embedded steganographically in the image. The receiver extracts
 
 ## Implementations
 
-| Directory | Scheme | Signature Size | Security | Status |
-|-----------|--------|---------------|----------|--------|
-| [UOV/](UOV/) | Oil and Vinegar (post-quantum) | 400-504 bits | 80-100 bits | Working prototype |
+| Directory | Scheme | Payload Size | Security | Quantum-safe | Status |
+|-----------|--------|-------------|----------|-------------|--------|
+| [UOV/](UOV/) | Oil and Vinegar | 400-504 bits (sig only, pHash recovered) | 80-100 bits | Yes | Working prototype |
+| [BLS/](BLS/) | BLS (BN-P158) | 264-352 bits (pHash + sig, no PK) | ~78 bits | No | Working prototype |
+| [BLS/](BLS/) | BLS (BLS12-381) | 488-576 bits (pHash + sig, no PK) | ~117-120 bits | No | Working prototype |
 
 ## Documentation
 
-- [UOV Implementation](UOV/) -- Full documentation, API, build instructions
+- [UOV Implementation](UOV/) -- Post-quantum signatures with message recovery
+- [BLS Implementation](BLS/) -- Classical BLS signatures (BN-P158 and BLS12-381)
 - [Scheme Comparison](docs/scheme-comparison.md) -- Analysis of all PQC signature candidates considered
 
 ## Architecture
 
 ```
-[pHash(image)] ──► [UOV sign] ──► [outer RS-ECC] ──► [interleaver] ──► [stego embed]
+[pHash(image)] ──► [sign] ──► [outer RS-ECC] ──► [interleaver] ──► [stego embed]
 ```
 
-Each implementation provides the signature layer. The outer ECC and stego embedding layers are planned future work.
+Each implementation provides the signature layer. UOV recovers the pHash from the signature (message recovery); BLS transmits the pHash explicitly alongside the signature. The outer ECC and stego embedding layers are planned future work.
 
 ## License
 

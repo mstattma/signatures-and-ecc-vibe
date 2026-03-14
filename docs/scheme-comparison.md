@@ -47,8 +47,8 @@ The table below includes only schemes that could plausibly fit within the channe
 | Scheme | Sig bits | PK compressed | Sig + PK (bits) | Digest recovery? | Classical security (bits) | Quantum security (bits) | Status | Risk |
 |---|---|---|---|---|---|---|---|---|
 | ~~GeMSS-128~~ | ~~264~~ | ~~N/A~~ | ~~N/A~~ | ~~Partial~~ | ~~72 (broken)~~ | ~~N/A~~ | **BROKEN** | Fatal: Support-Minors MinRank key recovery |
-| **BLS (MNT-159)** | ~160 | ~20 B | **~320** | No | ~60-70 | 0 (Shor) | Non-standard | Quantum-broken; very low classical security |
-| **BLS12-381** | 384 | 48 B | **768** | No | ~117-120 | 0 (Shor) | Standardized | Quantum-broken; ~8-11 bits below 128 target |
+| **BLS (BN-P158)** | 168 | 41 B | **496** | No | ~78 | 0 (Shor) | Implemented [^2] | Quantum-broken; replaces MNT-159 with better security |
+| **BLS12-381** | 392 | 97 B | **1,168** | No | ~117-120 | 0 (Shor) | Implemented [^2] | Quantum-broken; ~8-11 bits below 128 target |
 | **UOV-80** (custom) | **400** | 4.2 KB | **34,128** | **Yes** (144 bits hash + 16 bits salt) | 80 | ~40-48 (est.) | Custom params | Non-standard; 80-bit may be thin for active attacker |
 | **UOV-100** (custom) | **504** | 8.1 KB | **65,312** | **Yes** (184 bits hash + 16 bits salt) | 100 | ~50-60 (est.) | Custom params | Non-standard; good security margin |
 | **UOV** (NIST L1) | 768 [^1] | ~43-66 KB | **~345K-529K** | **Yes** (~256 bits) | 128 | ~64-96 (uncertain) | NIST R2 | Low risk; well-studied 25+ year history |
@@ -57,7 +57,10 @@ The table below includes only schemes that could plausibly fit within the channe
 
 The "Sig + PK" column shows the total bits if the public key (compressed where available) is transmitted alongside the signature rather than exchanged out-of-band. BLS and SQIsign have dramatically smaller totals due to their tiny public keys. For UOV, out-of-band PK exchange is essential.
 
+Note: BLS payload sizes above are signature-only. The pHash must also be transmitted (BLS has no message recovery), adding 96-184 bits depending on pHash size. See [BLS/README.md](../BLS/README.md) for full payload tables.
+
 [^1]: UOV NIST L1 uses the standard reference implementation with salt appended to the signature (768 + salt bits). With the salt-in-digest modification applied, the signature would be 768 bits (96 bytes for GF(16) variant) or 896 bits (112 bytes for GF(256) variant) with no appended salt.
+[^2]: Implemented in [BLS/](../BLS/) using the RELIC toolkit. BN-P158 replaces the originally considered MNT-159 curve -- BN-P158 has superior security (~78 bits vs ~60-70 bits for MNT-159 k=6) due to its higher embedding degree (k=12 vs k=6), which pushes the GT field to 1896 bits. Sizes confirmed by measurement: G1 = 21 bytes, G2 = 41 bytes for BN-P158; G1 = 49 bytes, G2 = 97 bytes for BLS12-381.
 
 ### Custom UOV Parameters
 
@@ -128,9 +131,9 @@ BLS12-381 was designed to target 128-bit classical security, but improved Number
 - **Barbulescu-Duquesne (2017)**: Updated key size estimates confirm BLS12-381's 4572-bit target field (381 x 12) falls short of 128-bit NFS security
 - **NCC Group report**: Actual security estimated at **~117-120 bits**
 
-For BLS on MNT-159 curves (embedding degree 6), the 960-bit target field GF(p^6) provides only **~60-70 bits** of tower NFS security -- firmly in the "breakable by well-funded attacker" range.
+The originally considered MNT-159 curve (embedding degree 6) had a 960-bit target field providing only ~60-70 bits of security. We replaced it with **BN-P158** (embedding degree 12), whose 1896-bit GT field shifts the bottleneck to the G1 discrete log (~78 bits via Pollard rho), providing substantially better security.
 
-Both BLS variants are completely broken by Shor's algorithm on a quantum computer.
+All BLS variants are completely broken by Shor's algorithm on a quantum computer.
 
 ### UOV has inherent message recovery
 
@@ -199,7 +202,7 @@ Receiver:
 
 2. **UOV-80 at 400 bits** is the fallback if ECC overhead is too high for UOV-100: leaves ~100 bits for outer ECC within a 500-bit budget. However, 80-bit security is marginal against well-resourced active attackers. Collision resistance is 72 bits (with default 2-byte salt).
 
-3. **BLS12-381 at 384 bits** is viable if post-quantum security is not required and the digest can be transmitted separately or is already known to the receiver. Compact, standardized, well-understood. No message recovery.
+3. **BLS12-381 at 392 bits** (+ pHash) is viable if post-quantum security is not required. With a 144-bit pHash, total payload is 536 bits. No message recovery -- pHash must be transmitted explicitly. Optional in-band PK adds 776 bits. See [BLS/](../BLS/).
 
 4. **UOV NIST L1 at 768 bits** (with salt-in-digest) is the conservative choice if the channel can accommodate ~1000 bits: standardized parameters, 128-bit security, 25+ year cryptanalytic history.
 

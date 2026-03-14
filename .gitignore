@@ -8,3 +8,8 @@ pqov/PQCgenKAT_sign
 *.req
 *.rsp
 massif.out.*
+
+# BLS build artifacts
+BLS/build-*/
+BLS/stego_demo
+BLS/size_test_*

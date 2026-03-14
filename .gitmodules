@@ -1,0 +1,3 @@
+[submodule "BLS/relic"]
+	path = BLS/relic
+	url = https://github.com/relic-toolkit/relic.git
