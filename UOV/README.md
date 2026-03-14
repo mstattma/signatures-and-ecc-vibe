@@ -74,7 +74,8 @@ The choice of perceptual hash function determines the properties of the fuzzy si
 | aHash (average) | 8 bytes | Yes | Yes | Simplest, least robust |
 | pHash+ (extended) | 16-32 bytes | Yes (16B) / truncated | Yes | More discriminative |
 | BlockHash | 16-32 bytes | Yes (16B) / truncated | Yes | Good for partial modifications |
-| NNPH (neural) | varies | depends | depends | Most robust, requires ML model |
+| [DinoHash](https://github.com/proteus-photos/dinohash-perceptual-hash) | 12 bytes (96 bits) | Yes | Yes | DINOv2-based neural hash; SOTA robustness to filters, compression, crops, adversarial attacks; 12% better bit accuracy than prior art ([paper](https://arxiv.org/abs/2503.11195)) |
+| NNPH (neural, other) | varies | depends | depends | Robust, requires ML model |
 
 For hash outputs shorter than `_HASH_EFFECTIVE_BYTE`, the remaining bytes can be used for additional metadata or set to zero. For hash outputs longer than `_HASH_EFFECTIVE_BYTE`, they must be truncated (reducing discriminative power but preserving the fuzzy comparison property).
 
