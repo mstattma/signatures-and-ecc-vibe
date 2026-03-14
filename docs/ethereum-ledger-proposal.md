@@ -87,7 +87,7 @@ The IPFS metadata JSON follows a structure inspired by ERC-721 metadata:
 {
   "name": "IMG_20240315_142530.jpg",
   "description": "Authenticated image",
-  "image": "ipfs://Qm.../thumbnail.jpg",
+    "image": "ipfs://Qm.../thumbnail.avif",
   "properties": {
     "file_size": 4521983,
     "file_name": "IMG_20240315_142530.jpg",
@@ -319,9 +319,62 @@ When using off-chain attestations, the attestation data must be stored somewhere
 |---|---|---|
 | Off-chain attestation (JSON) | ~1.5-2.5 KB | EIP-712 signed attestation with schema data |
 | Metadata JSON | ~0.5-2 KB | Filename, dimensions, EXIF, stego params |
-| Thumbnail (optional) | ~5-50 KB | Low-res JPEG |
+| Thumbnail (optional) | ~15-40 KB | See thumbnail format proposal below |
 | **Total without thumbnail** | **~2-4.5 KB** | |
-| **Total with thumbnail** | **~7-55 KB** | |
+| **Total with thumbnail** | **~18-45 KB** | |
+
+#### Thumbnail format proposal
+
+The thumbnail serves two verification purposes: (1) visual confirmation that the image matches expectations, and (2) detection of visible tampering or content substitution. For these purposes, perfect fidelity is not needed — the thumbnail must be recognizable and show the image's composition, but fine detail is irrelevant.
+
+**Target resolution: ~2.5 megapixels** (e.g., 1920x1300 or equivalent aspect ratio). This is sufficient to see composition, faces, text, and gross modifications while being a significant downscale from modern camera sensors (12-50+ MP).
+
+**Format comparison at 2.5MP (~1920x1300 photographic content):**
+
+| Format | Quality | Typical size | Browser support | Notes |
+|---|---|---|---|---|
+| **AVIF** | q=20 | **15-30 KB** | Chrome, Firefox, Safari 16.4+ | Best compression; AV1-based; recommended |
+| **AVIF** | q=30 | 25-50 KB | Same | Higher quality, still compact |
+| WebP | q=20 | 25-50 KB | Universal (all modern browsers) | Good fallback if AVIF unsupported |
+| WebP | q=30 | 40-80 KB | Same | |
+| JPEG | q=15 | 50-100 KB | Universal | Legacy; 2-3x larger than AVIF at same quality |
+| JPEG XL | q=20 | 15-35 KB | Limited (Chrome removed support) | Excellent compression but poor ecosystem support |
+| BPG | q=20 | 12-25 KB | None (requires decoder) | Best compression but patent-encumbered, no browser support |
+
+**Recommendation: AVIF at quality 20-25** as primary format, with WebP at quality 20-25 as fallback.
+
+At AVIF q=20:
+- Photographic content: ~15-30 KB
+- High-detail/text-heavy content: ~25-40 KB
+- Average: **~20-35 KB**
+
+This is ~3-5x smaller than equivalent JPEG quality and sufficient for visual verification.
+
+**Thumbnail generation parameters:**
+
+```
+# Using libavif / ffmpeg / ImageMagick
+# Target: 2.5MP, maintain aspect ratio, AVIF quality 22
+ffmpeg -i input.jpg -vf "scale='min(1920,iw)':min(1300,ih):force_original_aspect_ratio=decrease" \
+  -c:v libaom-av1 -crf 32 -still-picture 1 thumbnail.avif
+
+# Or with ImageMagick (if AVIF support compiled in)
+magick input.jpg -resize 1920x1300\> -quality 22 thumbnail.avif
+
+# WebP fallback
+magick input.jpg -resize 1920x1300\> -quality 22 thumbnail.webp
+```
+
+**Why not smaller thumbnails?** At lower resolutions (e.g., 320x240 = 77 Kpixels), the thumbnail would be only ~1-3 KB but would not reveal text content, subtle modifications, or fine compositional details. The 2.5MP target strikes a balance: large enough for meaningful visual verification, small enough (~20-35 KB in AVIF) that storage costs remain negligible.
+
+#### Data budget summary (updated with thumbnail sizing)
+
+| Configuration | Size per image | Notes |
+|---|---|---|
+| **Without thumbnail** | ~2-4.5 KB | Attestation + metadata JSON only |
+| **With AVIF thumbnail (q=22, 2.5MP)** | ~22-40 KB | + ~20-35 KB thumbnail |
+| **With WebP thumbnail (q=22, 2.5MP)** | ~27-55 KB | + ~25-50 KB thumbnail |
+| **With JPEG thumbnail (q=15, 2.5MP)** | ~52-105 KB | + ~50-100 KB thumbnail; not recommended |
 
 #### IPFS and trusted timestamps
 
@@ -351,17 +404,29 @@ Prices as of early 2026. All providers store data on IPFS and/or Filecoin.
 
 #### Cost per image by provider
 
-Assuming ~25 KB average per image (attestation + metadata + small thumbnail):
+##### Without thumbnail (~3 KB per image: attestation + metadata)
 
-| Volume/month | Storacha (free tier) | Storacha ($10/mo) | Filebase (free) | Filebase (paid) | Filecoin direct | NFT.Storage | Self-hosted |
-|---|---|---|---|---|---|---|---|
-| 100 (2.5 MB) | **Free** | **Free** | **Free** | **Free** | ~$0.00 | $0.01 one-time | ~$5/mo VPS |
-| 1,000 (25 MB) | **Free** | **Free** | **Free** | **Free** | ~$0.00 | $0.12 one-time | ~$5/mo VPS |
-| 10,000 (250 MB) | **Free** | **Free** | **Free** | $0.002/mo | ~$0.00 | $1.22 one-time | ~$5/mo VPS |
-| 100,000 (2.5 GB) | **Free** | $0.13/mo | **Free** | $0.02/mo | ~$0.00 | $12.25 one-time | ~$10/mo VPS |
-| 1M (25 GB) | $3.00/mo | $1.25/mo | $0.18/mo | $0.23/mo | ~$0.003/mo | $122.50 one-time | ~$20/mo VPS |
+| Volume/month | Cumulative data | Storacha (free) | Filebase (free) | Filecoin direct | Self-hosted |
+|---|---|---|---|---|---|
+| 100 | 300 KB | **Free** | **Free** | ~$0.00 | ~$5/mo VPS |
+| 1,000 | 3 MB | **Free** | **Free** | ~$0.00 | ~$5/mo VPS |
+| 10,000 | 30 MB | **Free** | **Free** | ~$0.00 | ~$5/mo VPS |
+| 100,000 | 300 MB | **Free** | **Free** | ~$0.00 | ~$5/mo VPS |
+| 1,000,000 | 3 GB | **Free** | **Free** | ~$0.00 | ~$10/mo VPS |
 
-**Key insight**: At any reasonable volume (< 100K images/month), persistent storage costs are negligible compared to on-chain attestation gas. Even at 1M images/month, storage is under $5/month on most providers.
+Without thumbnails, storage is effectively free at any volume — 1M images per month only accumulates 3 GB, well within free tiers.
+
+##### With AVIF thumbnail (~30 KB per image: attestation + metadata + 2.5MP AVIF)
+
+| Volume/month | Cumulative data | Storacha (free) | Storacha ($10/mo) | Filebase (free) | Filebase (paid) | Filecoin direct | NFT.Storage | Self-hosted |
+|---|---|---|---|---|---|---|---|---|
+| 100 | 3 MB | **Free** | **Free** | **Free** | **Free** | ~$0.00 | $0.01 one-time | ~$5/mo VPS |
+| 1,000 | 30 MB | **Free** | **Free** | **Free** | **Free** | ~$0.00 | $0.15 one-time | ~$5/mo VPS |
+| 10,000 | 300 MB | **Free** | **Free** | **Free** | $0.003/mo | ~$0.00 | $1.47 one-time | ~$5/mo VPS |
+| 100,000 | 3 GB | **Free** | $0.15/mo | **Free** | $0.03/mo | ~$0.00 | $14.70 one-time | ~$10/mo VPS |
+| 1,000,000 | 30 GB | $3.75/mo | $1.50/mo | $0.27/mo | $0.27/mo | ~$0.003/mo | $147 one-time | ~$20/mo VPS |
+
+**Key insight**: Even with 2.5MP AVIF thumbnails, storage costs are negligible compared to on-chain attestation gas at any reasonable volume. The 5 GB free tiers on Storacha and Filebase cover ~170,000 images with thumbnails.
 
 #### NFT.Storage for non-NFT use cases
 
@@ -376,20 +441,41 @@ NFT.Storage was designed for NFT metadata, but its service is not technically re
 
 ### Combined Cost Summary
 
-| Configuration | Attestation cost | Storage cost | Timestamp | Total per image |
+#### Without thumbnail (~3 KB per image)
+
+| Configuration | Attestation | Storage | Timestamp | Total per image |
 |---|---|---|---|---|
-| **On-chain attestation + IPFS** | $0.10-0.14 (L2 gas) | ~$0.00 (free tier) | Trusted (block timestamp) | **~$0.10-0.14** |
-| **On-chain attestation + IPFS (with thumbnail)** | $0.10-0.14 (L2 gas) | ~$0.00 (free tier) | Trusted (block timestamp) | **~$0.10-0.14** |
-| **On-chain batch (10 images) + IPFS** | $0.08-0.10 (amortized) | ~$0.00 | Trusted | **~$0.08-0.10** |
-| **Off-chain attestation + Storacha** | $0.00 (no gas) | ~$0.00 (free tier) | Self-reported only | **~$0.00** |
-| **Off-chain attestation + Storacha + on-chain anchor** | ~$0.04 (anchor tx) | ~$0.00 (free tier) | Trusted (anchor) | **~$0.04** |
-| **Off-chain attestation + Filebase** | $0.00 | ~$0.00 (free tier) | Self-reported only | **~$0.00** |
-| **Off-chain attestation + Filebase + on-chain anchor** | ~$0.04 | ~$0.00 (free tier) | Trusted (anchor) | **~$0.04** |
-| **Off-chain attestation + Filecoin direct** | $0.00 | ~$0.00 | Self-reported only | **~$0.00** |
-| **Off-chain attestation + Filecoin direct + on-chain anchor** | ~$0.04 | ~$0.00 | Trusted (anchor) | **~$0.04** |
-| **Off-chain attestation + self-hosted IPFS** | $0.00 | ~$5-20/mo fixed | Self-reported only | **~$0.00** + VPS |
-| **Off-chain attestation + self-hosted IPFS + on-chain anchor** | ~$0.04 | ~$5-20/mo fixed | Trusted (anchor) | **~$0.04** + VPS |
-| **Off-chain attestation + NFT.Storage** | $0.00 | ~$0.0001/image one-time | Self-reported only | **~$0.0001** |
+| **On-chain + Storacha (free)** | $0.10-0.14 | ~$0.00 | Trusted (block) | **~$0.10-0.14** |
+| **On-chain batch (10) + Storacha** | $0.08-0.10 | ~$0.00 | Trusted | **~$0.08-0.10** |
+| **Off-chain + Storacha (free)** | $0.00 | ~$0.00 | Self-reported | **~$0.00** |
+| **Off-chain + Storacha + anchor** | ~$0.04 | ~$0.00 | Trusted | **~$0.04** |
+| **Off-chain + Filebase (free)** | $0.00 | ~$0.00 | Self-reported | **~$0.00** |
+| **Off-chain + Filebase + anchor** | ~$0.04 | ~$0.00 | Trusted | **~$0.04** |
+| **Off-chain + Filecoin direct** | $0.00 | ~$0.00 | Self-reported | **~$0.00** |
+| **Off-chain + Filecoin + anchor** | ~$0.04 | ~$0.00 | Trusted | **~$0.04** |
+| **Off-chain + self-hosted** | $0.00 | ~$5-20/mo VPS | Self-reported | **~$0.00** + VPS |
+| **Off-chain + self-hosted + anchor** | ~$0.04 | ~$5-20/mo VPS | Trusted | **~$0.04** + VPS |
+
+Without thumbnails, storage is negligible at all volumes. The dominant cost is always the attestation/anchor gas.
+
+#### With 2.5MP AVIF thumbnail (~30 KB per image)
+
+| Configuration | Attestation | Storage | Timestamp | Total per image |
+|---|---|---|---|---|
+| **On-chain + Storacha (free)** | $0.10-0.14 | ~$0.00 | Trusted (block) | **~$0.10-0.14** |
+| **On-chain batch (10) + Storacha** | $0.08-0.10 | ~$0.00 | Trusted | **~$0.08-0.10** |
+| **Off-chain + Storacha (free)** | $0.00 | ~$0.00 | Self-reported | **~$0.00** |
+| **Off-chain + Storacha ($10/mo)** | $0.00 | ~$0.000005 | Self-reported | **~$0.00** |
+| **Off-chain + Storacha + anchor** | ~$0.04 | ~$0.00 | Trusted | **~$0.04** |
+| **Off-chain + Filebase (free)** | $0.00 | ~$0.00 | Self-reported | **~$0.00** |
+| **Off-chain + Filebase + anchor** | ~$0.04 | ~$0.00 | Trusted | **~$0.04** |
+| **Off-chain + Filecoin direct** | $0.00 | ~$0.000003 | Self-reported | **~$0.00** |
+| **Off-chain + Filecoin + anchor** | ~$0.04 | ~$0.000003 | Trusted | **~$0.04** |
+| **Off-chain + self-hosted** | $0.00 | ~$5-20/mo VPS | Self-reported | **~$0.00** + VPS |
+| **Off-chain + self-hosted + anchor** | ~$0.04 | ~$5-20/mo VPS | Trusted | **~$0.04** + VPS |
+| **Off-chain + NFT.Storage** | $0.00 | ~$0.00015 one-time | Self-reported | **~$0.0002** |
+
+Even with 2.5MP AVIF thumbnails, the per-image storage cost never exceeds $0.001. The on-chain attestation or anchor gas remains the dominant cost by 100-1000x.
 
 ### Recommendation by use case
 
