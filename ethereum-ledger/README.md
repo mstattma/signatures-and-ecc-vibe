@@ -276,3 +276,22 @@ cd ethereum-ledger
 npx hardhat compile
 node scripts/export-abis.js    # Regenerates ui/packages/nextjs/contracts/externalContracts.ts
 ```
+
+### SE2 modification for external contract support
+
+Scaffold-ETH 2's block explorer only decodes transaction function names for contracts deployed via its built-in deploy system (`deployedContracts.ts`). Since our contracts are deployed by `ethereum-ledger/scripts/deploy.js` and registered as external contracts (`externalContracts.ts`), the block explorer would show "Unknown" for all function calls.
+
+We patched `ui/packages/nextjs/utils/scaffold-eth/decodeTxData.ts` to also load ABIs from `externalContracts.ts`:
+
+```typescript
+// Original: only loads deployedContracts
+import contractData from "~~/contracts/deployedContracts";
+
+// Patched: also loads externalContracts
+import contractData from "~~/contracts/deployedContracts";
+import externalContractData from "~~/contracts/externalContracts";
+```
+
+Both sets of ABIs are merged into the `interfaces` lookup table used by `decodeTransactionData()`. This enables the block explorer to decode function names like `registerKey`, `authorizeAdder`, `add`, `mightContain`, etc. for our external contracts.
+
+**Why external contracts?** Our contracts live in a separate Hardhat project (`ethereum-ledger/`) with its own deploy scripts, rather than in SE2's `packages/hardhat/`. The `export-abis.js` script bridges the two by reading Hardhat artifacts and `deployment.json` to generate `externalContracts.ts`. This keeps `ethereum-ledger/` as a standalone project that can be used independently of the UI.
