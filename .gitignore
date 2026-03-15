@@ -28,3 +28,4 @@ ethereum-ledger/.env
 tmp_stardust_demo/
 tmp_stego_test/
 tmp_stego_test_hd/
+ethereum-ledger/artifacts-host-sync/
