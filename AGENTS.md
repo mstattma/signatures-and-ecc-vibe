@@ -9,8 +9,7 @@ Guidance for coding agents operating in this repository.
 | `UOV/` | Post-quantum UOV signatures with salt-in-digest message recovery | C99 |
 | `BLS/` | BLS BN-P158 and BLS12-381 signatures using RELIC | C99 |
 | `unified-api/` | Scheme-agnostic signature API (`stego_sig.h`) over UOV and BLS | C99 |
-| `stardust/` | Git submodule — castLabs forensic watermarking (stego transport) | C/C++ |
-| `scripts/` | Repo-level orchestration (Stardust demo, patch helper) | Bash, Python |
+| `scripts/` | Repo-level utilities | Bash, Python |
 | `ethereum-ledger/` | Solidity contracts, Hardhat scripts, Dockerized local chain | Solidity, JS |
 | `ui/` | Scaffold-ETH 2 UI with custom pages (has its own `ui/AGENTS.md`) | TypeScript, React |
 | `docs/` | Design documents and proposals | Markdown |
@@ -23,7 +22,7 @@ When changing one area, check whether docs, Docker flow, generated ABI files, an
 - Prefer minimal, targeted changes. Do not reformat unrelated code.
 - Preserve standalone nature of subprojects (`ethereum-ledger/` is intentionally separate from `ui/packages/hardhat`).
 - Do not silently change security-sensitive defaults (salt size, pHash limits, signature layout, gas assumptions).
-- The `stardust/` submodule must stay clean. Apply patches at build/demo time via `scripts/patch_stardust.py`.
+- Stardust has been moved to `perceptual-fuzzy-hash-test-vibe`; this repo no longer contains it.
 
 ## Build / Test Quick Reference
 
@@ -59,7 +58,7 @@ make clean
 ```bash
 make stego_demo SCHEME=uov-80       # also: uov-100, bls-bn158, bls12-381
 make test SCHEME=bls-bn158          # single-scheme test (build + run)
-make stego_payload_tool SCHEME=bls-bn158      # payload tool used by Stardust demo
+make stego_payload_tool SCHEME=bls-bn158      # payload tool (consumed by downstream Python CLI)
 make clean
 ```
 
@@ -85,10 +84,7 @@ After contract changes: `cd ethereum-ledger && npx hardhat compile && node scrip
 
 ### `scripts/` (repo-level)
 
-```bash
-./scripts/stardust_image_demo.sh   # full BLS-BN158 → Stardust → extract → verify
-python3 scripts/patch_stardust.py  # apply local patches to stardust/ submodule
-```
+The `scripts/` directory previously contained `stardust_image_demo.sh` and `patch_stardust.py`, which have been moved to `perceptual-fuzzy-hash-test-vibe`.
 
 ## Code Style
 
@@ -137,7 +133,7 @@ python3 scripts/patch_stardust.py  # apply local patches to stardust/ submodule
 ### Shell / Python (`scripts/`)
 
 - Bash scripts: `set -euo pipefail`.
-- `patch_stardust.py` applies idempotent text replacements; check before re-applying.
+- Stardust patch script has moved to `perceptual-fuzzy-hash-test-vibe/stego/patch_stardust.py`.
 
 ## UI Extensions That Must Be Preserved
 
@@ -145,13 +141,9 @@ python3 scripts/patch_stardust.py  # apply local patches to stardust/ submodule
 - Homepage and debug page have project-specific copy, not SE2 defaults.
 - `decodeTxData.ts` patches: external contract decoding + contract creation labeling.
 
-## Stardust Integration
+## Stardust (moved)
 
-- `stardust/` is a git submodule (castlabs/stardust). Keep it clean in commits.
-- `scripts/patch_stardust.py` patches SSH→HTTPS submodules, system OpenCV support, and >64-bit WM-ID overflow.
-- `scripts/stardust_image_demo.sh` orchestrates: build → generate BLS payload → embed → align → extract → verify.
-- Stardust WM-ID path supports up to 256 bits; our BLS-BN158 payload is 184 bits.
-- UOV (400/504 bits) and BLS12-381 (408 bits) do NOT fit the current Stardust WM-ID path.
+Stardust watermark transport has been moved to `perceptual-fuzzy-hash-test-vibe`. This repo no longer contains the `stardust/` submodule, `patch_stardust.py`, or `stardust_image_demo.sh`.
 
 ## Downstream Consumer: Python Stego CLI
 
@@ -159,9 +151,10 @@ This repo is consumed as a **git submodule** by [`perceptual-fuzzy-hash-test-vib
 
 The downstream CLI depends on:
 - `unified-api/stego_payload_tool` (BLS-BN158 keygen/sign/verify)
-- `stardust/build/embed/sffw-embed`, `align/align`, `extract/extract` (Stardust watermark transport)
 - `ethereum-ledger/deployment.json` (contract addresses for ledger interaction)
 - `ethereum-ledger/` contract ABIs (attestation schema)
+
+Stardust binaries are now built and managed in the downstream repo directly.
 
 If you change any of these interfaces (binary CLI args, payload format, attestation schema, deployment.json structure), the Python CLI in the other repo will also need updating.
 

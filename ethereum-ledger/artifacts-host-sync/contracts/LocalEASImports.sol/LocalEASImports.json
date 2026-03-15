@@ -1,0 +1,29 @@
+{
+  "_format": "hh-sol-artifact-1",
+  "contractName": "LocalEASImports",
+  "sourceName": "contracts/LocalEASImports.sol",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "contract EAS",
+          "name": "",
+          "type": "address"
+        },
+        {
+          "internalType": "contract SchemaRegistry",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "name": "_touch",
+      "outputs": [],
+      "stateMutability": "pure",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x6080604052348015600e575f5ffd5b5060b980601a5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c806338a16d9c14602a575b5f5ffd5b603960353660046051565b5050565b005b6001600160a01b0381168114604e575f5ffd5b50565b5f5f604083850312156061575f5ffd5b8235606a81603b565b91506020830135607881603b565b80915050925092905056fea2646970667358221220ca87fc4c29526738db87288013b2e83a529ab7d46418c6682cb32d61897c535e64736f6c634300081b0033",
+  "deployedBytecode": "0x6080604052348015600e575f5ffd5b50600436106026575f3560e01c806338a16d9c14602a575b5f5ffd5b603960353660046051565b5050565b005b6001600160a01b0381168114604e575f5ffd5b50565b5f5f604083850312156061575f5ffd5b8235606a81603b565b91506020830135607881603b565b80915050925092905056fea2646970667358221220ca87fc4c29526738db87288013b2e83a529ab7d46418c6682cb32d61897c535e64736f6c634300081b0033",
+  "linkReferences": {},
+  "deployedLinkReferences": {}
+}

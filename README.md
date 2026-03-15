@@ -41,7 +41,7 @@ For a scheme-independent discussion of perceptual hash choices, truncation trade
 Current transport layers in the repository:
 
 - **direct payload model** used by the signature demos (`UOV/`, `BLS/`, `unified-api/`)
-- **castLabs Stardust** watermark transport used by `./scripts/stardust_image_demo.sh`
+- **castLabs Stardust** watermark transport (moved to `perceptual-fuzzy-hash-test-vibe` repo)
 
 Signature-layer behavior:
 
@@ -88,11 +88,9 @@ Planned / partially implemented next:
 | [`/mnt/c/Users/micha/OneDrive/Dokumente/GitHub/perceptual-fuzzy-hash-test-vibe/docs/phash-benchmark-plan.md`](/mnt/c/Users/micha/OneDrive/Dokumente/GitHub/perceptual-fuzzy-hash-test-vibe/docs/phash-benchmark-plan.md) | Empirical benchmark plan for hash evaluation | Planned in sibling repo | Transform taxonomy, output schema, harness architecture |
 | [docs/video-extension.md](docs/video-extension.md) | Merkle tree of interval pHashes | Designed | Video commitment model, not yet implemented |
 
-## Implemented Stego Transport Components
+## Stego Transport Components
 
-| Directory / Script | Component | Status | Notes |
-|---|---|---|---|
-| [scripts/stardust_image_demo.sh](scripts/stardust_image_demo.sh) | castLabs Stardust watermark embed/extract | Working prototype | Real image payload round-trip using BLS-BN158 payloads |
+Stardust watermark transport has been moved to the [`perceptual-fuzzy-hash-test-vibe`](https://github.com/mstattma/perceptual-fuzzy-hash-test-vibe) repo, where it is integrated with the Python stego CLI (`python -m stego sign/verify`). This repo provides the signature tools consumed by that CLI via git submodule.
 
 ## Unified API
 
@@ -143,7 +141,7 @@ For BLS, the pHash can be omitted from the payload (e.g., looked up from a ledge
 - [Ethereum Ledger Implementation](ethereum-ledger/) -- Solidity contracts, deployment scripts, and E2E demo
 - [Web UI](ui/) -- Scaffold-ETH 2 contract explorer (`docker compose up` → http://localhost:3000/debug)
 - [SE2 UI Customizations](docs/ui-se2-customizations.md) -- All changes made to upstream Scaffold-ETH 2 and the project-specific UI extensions
-- [Stardust Stego Demo](docs/stardust-stego-demo.md) -- End-to-end image flow using castLabs Stardust as the stego transport layer
+- Stardust Stego Demo -- moved to [`perceptual-fuzzy-hash-test-vibe/docs/stardust-stego-demo.md`](https://github.com/mstattma/perceptual-fuzzy-hash-test-vibe/blob/master/docs/stardust-stego-demo.md)
 - [Video Extension](docs/video-extension.md) -- Merkle tree approach for authenticating video with per-interval tamper detection
 
 The Web UI includes custom routes:
@@ -179,13 +177,7 @@ SIMULATE_NETWORK=arbitrumNova npx hardhat run scripts/demo.js --network localhos
 
 See [ethereum-ledger/](ethereum-ledger/) for full setup options (Docker, manual, testnet).
 
-Run the additional image stego transport demo using castLabs Stardust:
-
-```bash
-./scripts/stardust_image_demo.sh
-```
-
-This flow uses the real BLS-BN158 payload generator from `unified-api/`, embeds the 184-bit `salt || sig` payload into an image using Stardust, extracts it again, and verifies the recovered payload.
+The stego transport demo (Stardust-based image embedding) has been moved to the [`perceptual-fuzzy-hash-test-vibe`](https://github.com/mstattma/perceptual-fuzzy-hash-test-vibe) repo. Use `python -m stego sign/verify` from that repo.
 
 ## Detailed Ledger Architecture
 

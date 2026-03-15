@@ -24,8 +24,7 @@ ethereum-ledger/cache/
 ethereum-ledger/artifacts/
 ethereum-ledger/.env
 
-# Stardust build artifacts
-stardust/build/
+# Stardust (moved to perceptual-fuzzy-hash-test-vibe)
 tmp_stardust_demo/
 tmp_stego_test/
 tmp_stego_test_hd/
