@@ -1,6 +1,14 @@
 # Fuzzy Signatures for Steganographic Image Authentication
 
-This project implements compact digital signature schemes for authenticating images through a steganographic channel embedded in the image itself. By signing a **perceptual hash** of the cover image and recovering it via message recovery, the receiver can compute an **authenticity score** -- a form of fuzzy signatures that are robust against minor image modifications.
+This project implements compact digital signature schemes for authenticating images through a steganographic channel embedded in the image itself.
+
+Instead of signing the raw image bytes, the sender signs a **perceptual hash** of the image. The receiver then compares the sender-side perceptual hash against their own perceptual hash of the received image.
+
+That makes the result a **fuzzy signature** rather than a binary valid/invalid signature:
+
+- exact cryptographic signatures break if even one bit changes
+- perceptual-hash signatures survive benign image changes such as recompression, resize, or light post-processing
+- verification yields an **authenticity score** or similarity measure instead of a strict boolean
 
 ## How It Works
 
@@ -12,7 +20,15 @@ Receiver: image' ──► stego_extract() ──► P(w) = phash_sender
                  ──► similarity(phash_sender, phash_receiver) = authenticity score
 ```
 
-The signature is embedded steganographically in the image. The receiver extracts it, recovers the sender's perceptual hash, and compares it against their own perceptual hash of the received image. Because perceptual hashes are robust against compression, resizing, and other non-malicious modifications, the result is a graduated authenticity score rather than a binary valid/invalid.
+The signature is embedded steganographically in the image. The receiver extracts it, recovers or retrieves the sender's perceptual hash, and compares it against their own perceptual hash of the received image.
+
+Typical interpretation:
+
+- high similarity -> authentic or only lightly modified
+- medium similarity -> related but modified image
+- low similarity -> suspicious or unrelated image
+
+For a scheme-independent discussion of perceptual hash choices, truncation trade-offs, and fuzzy-signature behavior, see [docs/perceptual-hash-considerations.md](docs/perceptual-hash-considerations.md).
 
 ## Implementations
 
@@ -64,6 +80,7 @@ For BLS, the pHash can be omitted from the payload (e.g., looked up from a ledge
 - [Unified API](unified-api/) -- Scheme-agnostic signature API with payload size tables
 - [UOV Implementation](UOV/) -- Post-quantum signatures with message recovery
 - [BLS Implementation](BLS/) -- Classical BLS signatures (BN-P158 and BLS12-381)
+- [Perceptual Hash Considerations](docs/perceptual-hash-considerations.md) -- Scheme-independent fuzzy-signature and perceptual hash trade-offs
 - [Scheme Comparison](docs/scheme-comparison.md) -- Analysis of all PQC signature candidates considered
 - [Ethereum Ledger Proposal](docs/ethereum-ledger-proposal.md) -- EAS-based on-chain registration with gas cost analysis
 - [Ethereum Ledger Implementation](ethereum-ledger/) -- Solidity contracts, deployment scripts, and E2E demo

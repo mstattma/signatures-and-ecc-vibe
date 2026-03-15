@@ -2,7 +2,10 @@
 
 This project implements compact post-quantum digital signatures based on [UOV (Oil and Vinegar)](https://www.pqov.org/) with **salt-in-digest message recovery**, designed for authenticating images through a steganographic channel embedded in the image itself.
 
-The core idea: the sender computes a **perceptual hash** of the cover image and signs it with UOV. The signature is steganographically embedded into the image. The receiver extracts the signature, recovers the sender's perceptual hash via the UOV public map `P(w)`, and compares it against their own perceptual hash of the received image. Because perceptual hashes are designed to be robust against minor image modifications, this produces an **authenticity score** rather than a binary valid/invalid result -- a form of **fuzzy signatures**.
+This README focuses on the **UOV-specific** design and implementation. For the general fuzzy-signature idea and perceptual hash trade-offs, see:
+
+- [README.md](../README.md) - high-level fuzzy signature concept
+- [docs/perceptual-hash-considerations.md](../docs/perceptual-hash-considerations.md) - perceptual hash comparison across schemes
 
 ## Overview
 
@@ -32,52 +35,6 @@ Sender                                                    Receiver
 **What the receiver recovers:** The sender's perceptual hash, extracted from `P(w)`. This is compared against the receiver's own perceptual hash for a similarity score.
 
 **What goes out-of-band (one-time setup):** The public key (~4-50 KB).
-
-## Fuzzy Signatures and Authenticity Scoring
-
-Traditional digital signatures are binary: valid or invalid. If even a single bit of the message changes, verification fails. This is problematic for image authentication through steganographic channels because:
-
-1. **The stego channel modifies the image**: embedding a signature into an image changes its pixel values slightly. The image the receiver sees is not bit-identical to the original.
-2. **Transmission may further alter the image**: re-compression (JPEG), resizing, color space conversion, and other processing can occur between sender and receiver.
-
-**Perceptual hashing** solves this by producing hash values that are similar (or identical) for visually similar images. By signing a perceptual hash instead of a cryptographic hash of the raw image bytes, we enable a graduated authenticity assessment:
-
-### How it works
-
-1. **Sender**: Computes `phash_sender = pHash(original_image)`, signs it with `ov_sign_digest()`, and embeds the signature `w` into the image using steganography.
-
-2. **Receiver**: Extracts `w` from the received image, evaluates `P(w)` to recover `phash_sender` (the sender's perceptual hash), computes `phash_receiver = pHash(received_image)`, and calculates a similarity score.
-
-3. **Authenticity score**: The score depends on the perceptual hash function used:
-   - **Hamming distance** (for pHash, dHash, aHash): count differing bits. Lower = more authentic.
-   - **Normalized similarity**: `1 - hamming_distance / total_bits`. Higher = more authentic.
-   - **Threshold**: define a threshold (e.g., >90% similar = authentic).
-
-### What this enables
-
-| Scenario | Cryptographic hash | Perceptual hash (ours) |
-|----------|-------------------|----------------------|
-| Image re-compressed (JPEG quality change) | Signature INVALID | Score: ~95% (authentic) |
-| Image slightly cropped or resized | Signature INVALID | Score: ~85% (likely authentic) |
-| Image watermarked or annotated | Signature INVALID | Score: ~70% (modified but recognizable) |
-| Completely different image | Signature INVALID | Score: ~50% (not authentic) |
-| Malicious tampering (face swap, object removal) | Signature INVALID | Score: varies (detectable if significant) |
-
-### Perceptual hash considerations
-
-The choice of perceptual hash function determines the properties of the fuzzy signature. The hash must fit within `_HASH_EFFECTIVE_BYTE` bytes of the recovered digest:
-
-| Perceptual hash | Typical output size | Fits in PARAM=80 (18B) | Fits in PARAM=100 (23B) | Properties |
-|----------------|--------------------|-----------------------|------------------------|------------|
-| pHash (DCT-based) | 8 bytes | Yes | Yes | Robust to scaling, compression |
-| dHash (difference) | 8 bytes | Yes | Yes | Fast, good for near-duplicates |
-| aHash (average) | 8 bytes | Yes | Yes | Simplest, least robust |
-| pHash+ (extended) | 16-32 bytes | Yes (16B) / truncated | Yes | More discriminative |
-| BlockHash | 16-32 bytes | Yes (16B) / truncated | Yes | Good for partial modifications |
-| [DinoHash](https://github.com/proteus-photos/dinohash-perceptual-hash) | 12 bytes (96 bits) | Yes | Yes | DINOv2-based neural hash; SOTA robustness to filters, compression, crops, adversarial attacks; 12% better bit accuracy than prior art ([paper](https://arxiv.org/abs/2503.11195)) |
-| NNPH (neural, other) | varies | depends | depends | Robust, requires ML model |
-
-For hash outputs shorter than `_HASH_EFFECTIVE_BYTE`, the remaining bytes can be used for additional metadata or set to zero. For hash outputs longer than `_HASH_EFFECTIVE_BYTE`, they must be truncated (reducing discriminative power but preserving the fuzzy comparison property).
 
 ## Signature Structure and Salt-in-Digest
 
