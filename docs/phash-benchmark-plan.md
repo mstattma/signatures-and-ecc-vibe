@@ -20,6 +20,7 @@ These are the hashes most likely to be used in production, alone or combined.
 |---|---|---|---|
 | **pHash** (DCT) | 8 B | `imagehash` | Baseline classical hash; widely used; well-understood behavior |
 | **dHash** | 8 B | `imagehash` | Second classical baseline; gradient-based; complements pHash |
+| **dHash-FS64** | 8 B | custom / `perceptual-fuzzy-hash-test-vibe` | Flip-safe dHash variant; strong candidate when mirrored content matters |
 | **colorHash** | 8-14 B | `imagehash` | Color distribution; independent signal from luminance hashes |
 | **BlockHash** | 16-32 B | `blockhash` / `imagehash` | Spatial structure; better for localized changes |
 | **DinoHash** | 12 B | `dinohash` | SOTA neural hash; adversarial-robust; primary neural candidate |
@@ -30,6 +31,7 @@ These are the hashes most likely to be used in production, alone or combined.
 | Hash | Output | Library | Why |
 |---|---|---|---|
 | **wHash** (wavelet) | 8 B | `imagehash` | Frequency decomposition alternative to pHash |
+| **dHash-FS128** | 16 B | custom / `perceptual-fuzzy-hash-test-vibe` | Higher-resolution flip-safe dHash reference |
 | **Marr-Hildreth** | 72 B | OpenCV `img_hash` | Edge-based; larger output; potentially better discriminative power |
 | **Radial Variance** | 40 B | OpenCV `img_hash` | Rotation-invariant; useful reference for rotation attacks |
 | **crop-resistant hash** | variable | `imagehash` | Explicitly designed for crop robustness |
@@ -40,9 +42,24 @@ These are the hashes most likely to be used in production, alone or combined.
 | Combination | Total bytes | Target scheme |
 |---|---|---|
 | pHash (8B) + DinoHash (11B truncated) | 19 B | UOV-80 with 1B salt |
+| dHash-FS64 (8B) + ColorHash (8B) | 16 B | Strong classical / flip-safe pair |
 | pHash (8B) + DinoHash (12B) + colorHash (4B) | 24 B | UOV-100 with 1B salt |
+| dHash-FS64 (8B) + BlockHash (12B truncated) + ColorHash (4B) | 24 B | UOV-100 flip-safe alternative |
 | pHash (8B) + DinoHash (12B) + colorHash (8B) | 28 B | BLS with ledger |
 | DinoHash (12B) + BlockHash (8B) + colorHash (4B) | 24 B | UOV-100 alternative |
+
+### External comparison findings to validate
+
+From `perceptual-fuzzy-hash-test-vibe/HASH_PROPERTIES.md`, we should explicitly validate the following claims on our own datasets:
+
+| Claim from external repo | Why we should test it ourselves |
+|---|---|
+| `pHash + ColorHash` is the best no-ML pair | May hold on photos, but screenshots / AI edits may behave differently |
+| `dHash-FS64 + ColorHash` matches the same worst-case robustness as `pHash + ColorHash` | Important if we need guaranteed flip invariance |
+| `dHash-FS64` has perfect H/V flip invariance | Must be verified under our exact implementation and image pipeline |
+| `ColorHash` has weak discrimination on unrelated images (~88% similarity) | Critical for thresholding; likely dataset-dependent |
+| `pHash` discriminates unrelated images much better than `dHash-FS64` | Important trade-off between discrimination and flip robustness |
+| `pHash + ColorHash + DinoHash-96` is the best unconstrained triple | Strong candidate for BLS + ledger |
 
 ### Regional modes
 

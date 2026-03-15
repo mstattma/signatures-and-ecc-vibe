@@ -87,6 +87,13 @@ The hash algorithm determines what kinds of transformations remain detectable. T
 | **Color Moment** | 42 × 8 B = 336 B | Statistical moments per color channel per block | Rotation-resistant (unique among classical hashes) | Very large output; floating-point | OpenCV img_hash |
 | **Crop-resistant hash** | variable | Segmented image regions hashed independently | Survives cropping | Larger, more complex comparison | imagehash |
 
+### Gradient / canonicalized variants
+
+| Hash | Output | Method | Strengths | Weaknesses | Source |
+|---|---|---|---|---|---|
+| **dHash-FS64** | 8 B (64 bits) | Canonicalized dHash with flip-safe normalization | Perfect flip invariance; strong brightness/blur robustness | Weaker discrimination than pHash; crop/gamma/noise sensitivity remains | `perceptual-fuzzy-hash-test-vibe` |
+| **dHash-FS128** | 16 B (128 bits) | Higher-resolution flip-safe dHash | Stronger detail than FS64 while preserving flip invariance | Larger output; same general failure modes | `perceptual-fuzzy-hash-test-vibe` |
+
 ### Neural / learned hashes
 
 | Hash | Output | Method | Strengths | Weaknesses | Library |
@@ -257,6 +264,25 @@ The table below uses the **1-byte salt** capacity (UOV-80: 19 B, UOV-100: 24 B).
 | 3×3 grid of pHash | 72 B | 2^288 | ~2^259 | No | No | Yes | Spatial localization |
 
 Note: DinoHash natively produces 12 bytes (96 bits). Truncating to 11 bytes loses 8 bits of discriminative power but enables the exact UOV-80 fit. Whether this truncation is acceptable depends on empirical testing.
+
+### External comparison findings to incorporate
+
+The parallel `perceptual-fuzzy-hash-test-vibe` repository contains useful empirical comparisons we should explicitly carry forward:
+
+| Finding | Why it matters |
+|---|---|
+| **pHash + ColorHash** was the best no-ML pair (106 bits total) | Strong classical baseline; ColorHash covers pHash weaknesses on crop, flip, and color changes |
+| **dHash-FS64 + ColorHash** achieved the same 95% worst-case robustness as pHash + ColorHash | Important flip-safe alternative when mirrored content matters |
+| **dHash-FS64** is perfectly H/V flip invariant | Worth benchmarking directly, not just as a derived idea |
+| **ColorHash** has weak discrimination on unrelated images (~88% similarity in that repo) | Reinforces that ColorHash must only be used as a complementary signal |
+| **pHash** discriminates unrelated images much better than dHash-FS64 (~47% vs ~75% similarity there) | Strong reason to keep pHash as a main discriminator even if dHash-FS64 is included |
+| **Best triple** there was pHash + ColorHash + DinoHash-96 (202 bits total) | Strong unconstrained candidate for BLS + ledger storage |
+
+These results suggest that our benchmark shortlist should explicitly include:
+
+- `dHash-FS64`
+- `dHash-FS64 + ColorHash(8B)`
+- `dHash-FS64 + BlockHash + ColorHash` (or the closest size-constrained variant)
 
 ### Suspicious correlation detection
 
