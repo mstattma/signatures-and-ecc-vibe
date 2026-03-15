@@ -23,7 +23,8 @@ These are the hashes most likely to be used in production, alone or combined.
 | **dHash-FS64** | 8 B | custom / `perceptual-fuzzy-hash-test-vibe` | Flip-safe dHash variant; strong candidate when mirrored content matters |
 | **colorHash** | 8-14 B | `imagehash` | Color distribution; independent signal from luminance hashes |
 | **BlockHash** | 16-32 B | `blockhash` / `imagehash` | Spatial structure; better for localized changes |
-| **DinoHash** | 12 B | `dinohash` | SOTA neural hash; adversarial-robust; primary neural candidate |
+| **DinoHash-96** | 12 B | `dinohash` | Smallest practical neural hash; primary UOV/BLS candidate |
+| **DinoHash-128** | 16 B | `dinohash` | Stronger discrimination than 96-bit while still compact; primary shortlist |
 | **PDQ** | 32 B | `perception` (Thorn) | Meta's open-source hash; designed for social media scale |
 
 ### Secondary candidates (benchmark if time allows)
@@ -32,6 +33,7 @@ These are the hashes most likely to be used in production, alone or combined.
 |---|---|---|---|
 | **wHash** (wavelet) | 8 B | `imagehash` | Frequency decomposition alternative to pHash |
 | **dHash-FS128** | 16 B | custom / `perceptual-fuzzy-hash-test-vibe` | Higher-resolution flip-safe dHash reference |
+| **DinoHash-256** | 32 B | `dinohash` | Stronger discrimination / collision resistance reference for BLS + ledger |
 | **Marr-Hildreth** | 72 B | OpenCV `img_hash` | Edge-based; larger output; potentially better discriminative power |
 | **Radial Variance** | 40 B | OpenCV `img_hash` | Rotation-invariant; useful reference for rotation attacks |
 | **crop-resistant hash** | variable | `imagehash` | Explicitly designed for crop robustness |
