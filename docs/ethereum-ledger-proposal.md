@@ -459,35 +459,68 @@ Client wants to register image on Arbitrum Nova:
    └── "Found on chain X" → genuine duplicate → retry with new salt
 
 2. Trustless pre-filter: call bloomFilter.mightContain() on Nova
-   ├── false → definitely not on any synced chain → proceed to step 4
+   ├── false → definitely not on any synced chain → proceed to step 5
    └── true → might exist (or false positive) → continue to step 3
 
-3. Authoritative check: query per-chain resolver pHashSaltIndex on Nova
-   ├── Resolver confirms (non-zero UID) → genuine local duplicate → retry with new salt
-   └── Resolver says no (zero) → Bloom false positive → safe to proceed to step 4
+3. Authoritative local check: query resolver.pHashSaltIndex() on Nova
+   ├── Confirmed (non-zero UID) → genuine local duplicate → retry with new salt
+   └── Not found (zero) → not a local duplicate → continue to step 4
 
-4. Register on Nova (resolver adds to pHashSaltIndex + calls bloomFilter.add())
+4. Cross-chain resolver check via RPC: query resolver.pHashSaltIndex()
+   on each OTHER chain via direct JSON-RPC eth_call (free view calls)
+   ├── Found on chain X → genuine cross-chain duplicate → retry with new salt
+   └── Not found on any chain → Bloom false positive (stale sync) → safe to proceed
 
-5. Background: relayer syncs Nova's new Bloom entry to Base and Optimism
+5. Register on Nova (resolver adds to pHashSaltIndex + calls bloomFilter.add())
+
+6. Background: relayer syncs Nova's new Bloom entry to Base and Optimism
 ```
 
-**Important**: Bloom filter results are deterministic — the same input always returns the same result. A Bloom false positive does NOT require a salt retry; it is resolved by checking the authoritative per-chain resolver index (step 3). Salt retries only happen for genuine duplicates (step 1 or step 3 confirms).
+#### Gas costs for pre-registration checks
 
-**Why both layers?**
+All pre-registration checks (steps 1-4) are **free** — they are either off-chain queries or on-chain view calls:
 
-| Scenario | Indexer | Bloom filter | Resolver |
+| Step | Operation | Gas cost | Notes |
+|---|---|---|---|
+| 1 | Off-chain indexer HTTP query | **Free** | Trusted service; monitors all chains |
+| 2 | `bloomFilter.mightContain()` on local chain | **Free** (view call) | Executed locally by RPC node |
+| 3 | `resolver.pHashSaltIndex()` on local chain | **Free** (view call) | Direct mapping lookup |
+| 4 | `resolver.pHashSaltIndex()` on other chains via RPC | **Free** (view call per chain) | Client calls each chain's RPC endpoint directly |
+| 5 | Registration (write) | **~130K-250K gas** | Only step that costs gas; happens once |
+
+**Cross-chain view calls** work because the client simply connects to each chain's public RPC endpoint and makes a standard `eth_call`. No on-chain cross-chain messaging is needed for reads:
+
+```javascript
+// Client-side: check resolver on Base from anywhere (free)
+const baseProvider = new ethers.JsonRpcProvider("https://mainnet.base.org");
+const baseResolver = new ethers.Contract(RESOLVER_ADDR, abi, baseProvider);
+const uid = await baseResolver.pHashSaltIndex(key);  // free view call
+
+// Check resolver on Optimism too (also free)
+const opProvider = new ethers.JsonRpcProvider("https://mainnet.optimism.io");
+const opResolver = new ethers.Contract(RESOLVER_ADDR, abi, opProvider);
+const uid2 = await opResolver.pHashSaltIndex(key);   // free view call
+```
+
+This means the client can check all chains for duplicates at zero gas cost before committing to a registration.
+
+**Important**: Bloom filter results are deterministic — the same input always returns the same result. A Bloom false positive does NOT require a salt retry; it is resolved by checking the authoritative per-chain resolver indexes (steps 3-4). Salt retries only happen for genuine duplicates confirmed by the indexer (step 1) or resolvers (steps 3-4).
+
+**Why three layers?**
+
+| Scenario | Indexer | Bloom filter | Resolver(s) |
 |---|---|---|---|
 | Normal operation (unique) | "Not found" → proceed | Likely "false" → skip resolver | Not needed |
 | Normal operation (duplicate) | "Found" → retry salt | N/A | N/A |
-| Indexer down | Unavailable | "false" → proceed; "true" → check resolver | Final authority (on-chain) |
-| Indexer lies (allows dup) | Duplicate passes fast path | "true" → triggers resolver check | Catches the duplicate |
-| Bloom false positive | "Not found" → proceed | "true" → triggers resolver check | "No" → FP confirmed, proceed safely |
-| Cross-chain race condition | May have stale data | Bloom sync lag (~minutes) | Authoritative for local chain; cross-chain needs indexer |
+| Indexer down | Unavailable | Pre-filters queries | **Final authority**: check local + cross-chain via RPC (all free) |
+| Indexer lies (allows dup) | Passes fast path | "true" → triggers resolver check | Catches the duplicate |
+| Bloom false positive | "Not found" → proceed | "true" → triggers resolver checks | Local: "no"; cross-chain RPC: "no" → FP confirmed, proceed |
+| Cross-chain race condition | May have stale data | Bloom sync lag (~minutes) | Cross-chain RPC gives real-time answer (free) |
 
 The three layers are complementary:
 - **Indexer**: fast (~100ms), cross-chain, definitive, but trusted
-- **Bloom filter**: trustless, probabilistic, pre-filters most queries (saves resolver reads)
-- **Per-chain resolver**: trustless, authoritative, zero false positives/negatives on that chain
+- **Bloom filter**: trustless, probabilistic, pre-filters most queries (avoids unnecessary resolver reads)
+- **Per-chain resolvers** (local + cross-chain via RPC): trustless, authoritative, zero false positives/negatives, free to query
 
 #### Security aspect: perceptual hash collisions
 
