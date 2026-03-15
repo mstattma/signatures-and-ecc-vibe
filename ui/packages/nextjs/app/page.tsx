@@ -31,12 +31,12 @@ const Home: NextPage = () => {
             />
           </div>
           <p className="text-center text-lg max-w-2xl">
-            Explore signing keys, cross-chain duplicate detection, and transaction history for the
-            stego-backed image authentication system.
+            Explore registered users, signing keys, on-chain image records, cross-chain duplicate
+            detection, and transaction history for the stego-backed image authentication system.
           </p>
           <p className="text-center text-lg max-w-2xl">
-            Use the navigation above to inspect registered users, key lifecycles, the Bloom filter,
-            raw contract functions, and local chain activity.
+            Use the navigation above to inspect registered users, key lifecycles, image attestations,
+            the Bloom filter, raw contract functions, and local chain activity.
           </p>
         </div>
 

@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { decodeAbiParameters, encodePacked, keccak256, parseAbi } from "viem";
 import { usePublicClient } from "wagmi";
 import externalContracts from "~~/contracts/externalContracts";
-import { useTargetNetwork } from "~~/hooks/scaffold-eth";
+import { useScaffoldEventHistory, useTargetNetwork } from "~~/hooks/scaffold-eth";
 
 const resolverAbi = parseAbi([
   "function pHashSaltIndex(bytes32) view returns (bytes32)",
@@ -60,6 +60,18 @@ export function ImageSearch() {
   const resolverAddress = resolver?.address as `0x${string}` | undefined;
 
   const canSearch = useMemo(() => !!publicClient && !!resolverAddress && !!easAddress, [publicClient, resolverAddress, easAddress]);
+
+  const { data: imageEvents } = useScaffoldEventHistory({
+    // @ts-ignore external contract supported in runtime
+    contractName: "ImageAuthResolver",
+    eventName: "ImageRegistered",
+    fromBlock: 0n,
+  });
+
+  const recentEvents = useMemo(() => {
+    if (!imageEvents) return [];
+    return [...imageEvents].slice(-20).reverse();
+  }, [imageEvents]);
 
   const lookupBySignature = async () => {
     if (!canSearch || !resolverAddress || !publicClient || !easAddress) return;
@@ -164,6 +176,42 @@ export function ImageSearch() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
+      <div className="card bg-base-200 shadow-xl">
+        <div className="card-body">
+          <h2 className="card-title">Recent Image Records</h2>
+          <p className="text-sm text-base-content/70">
+            “Recent” currently means the latest <strong>20</strong> `ImageRegistered` events on the active chain,
+            sorted newest-first by block/log order.
+          </p>
+          {recentEvents.length === 0 ? (
+            <div className="text-sm text-base-content/70">No image registrations found on this chain yet.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="table table-sm">
+                <thead>
+                  <tr>
+                    <th>UID</th>
+                    <th>Attester</th>
+                    <th>Sig Prefix</th>
+                    <th>pHashSaltKey</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recentEvents.map((event: any, idx: number) => (
+                    <tr key={idx}>
+                      <td><code className="text-xs break-all">{event.args?.attestationUID || event.args?.attestationUid || event.args?.uid || "-"}</code></td>
+                      <td><code className="text-xs break-all">{event.args?.attester || "-"}</code></td>
+                      <td><code className="text-xs break-all">{event.args?.sigPrefix || "-"}</code></td>
+                      <td><code className="text-xs break-all">{event.args?.pHashSaltKey || "-"}</code></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
       <div className="card bg-base-200 shadow-xl">
         <div className="card-body">
           <h2 className="card-title">Search by Signature</h2>
