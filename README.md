@@ -30,7 +30,48 @@ Typical interpretation:
 
 For a scheme-independent discussion of perceptual hash choices, truncation trade-offs, and fuzzy-signature behavior, see [docs/perceptual-hash-considerations.md](docs/perceptual-hash-considerations.md).
 
-## Implementations
+## Architecture
+
+### Stego Channel Pipeline
+
+```text
+[pHash(image)] -> [sign] -> [stego transport] -> [extract] -> [verify]
+```
+
+Current transport layers in the repository:
+
+- **direct payload model** used by the signature demos (`UOV/`, `BLS/`, `unified-api/`)
+- **castLabs Stardust** watermark transport used by `./scripts/stardust_image_demo.sh`
+
+Signature-layer behavior:
+
+- **UOV** recovers the sender-side perceptual hash from the signature itself (message recovery)
+- **BLS** carries or externally retrieves the pHash and always carries a 2-byte salt in the payload
+
+Verification-layer behavior:
+
+- compare sender-side and receiver-side perceptual hashes for an authenticity score
+- optionally consult the ledger for PK lookup, timestamps, duplicate detection, reputation, and metadata
+
+### Ledger-Backed Verification
+
+The ledger implementation is **already started** in `ethereum-ledger/` and the design is documented in `docs/ethereum-ledger-proposal.md`.
+
+Implemented so far:
+
+- `KeyRegistry` for signing-key lifecycle and validity windows
+- `CrossChainBloomFilter` for cross-chain duplicate detection primitives
+- `ImageAuthResolver` for EAS-based registration policy enforcement
+- Dockerized local Hardhat node + UI workflow
+- End-to-end BLS-BN158 ledger demo scripts
+
+Planned / partially implemented next:
+
+- `ReputationRegistry`
+- testnet deployment flow with real EAS attestations
+- richer metadata verification oracles
+
+## Implemented Signature Schemes
 
 | Directory | Scheme | Sig (bits) | PK (bits) | SK (bits) | Payload Size | Classical Security | Quantum Security | Status |
 |-----------|--------|-----------|----------|----------|-------------|-------------------|-----------------|--------|
@@ -39,9 +80,19 @@ For a scheme-independent discussion of perceptual hash choices, truncation trade
 | [BLS/](BLS/) | BLS (BN-P158) | 168 | 328 | 160 | 280-368 bits (pHash + salt + sig, no PK) | ~78 bits | 0 (broken by Shor) | Working prototype |
 | [BLS/](BLS/) | BLS (BLS12-381) | 392 | 776 | 256 | 504-592 bits (pHash + salt + sig, no PK) | ~117-120 bits | 0 (broken by Shor) | Working prototype |
 
+## Implemented Perceptual Hash / Stego Transport Components
+
+| Directory / Script | Component | Type | Status | Notes |
+|---|---|---|---|---|
+| [docs/perceptual-hash-considerations.md](docs/perceptual-hash-considerations.md) | pHash / dHash / aHash / BlockHash / DinoHash comparison | Perceptual hash analysis | Documented | Scheme-independent comparison and trade-offs |
+| [scripts/stardust_image_demo.sh](scripts/stardust_image_demo.sh) | castLabs Stardust watermark embed/extract | Stego transport | Working prototype | Real image payload round-trip using BLS-BN158 payloads |
+| [docs/video-extension.md](docs/video-extension.md) | Merkle tree of interval pHashes | Video commitment model | Designed | Not yet implemented |
+
 ## Unified API
 
-The [unified-api/](unified-api/) directory provides a **scheme-agnostic API** (`stego_sig.h`) that abstracts over all signature schemes. A single `stego_demo.c` works identically with any backend:
+The [unified-api/](unified-api/) directory currently provides a **scheme-agnostic signature API** (`stego_sig.h`) that abstracts over the implemented signature schemes. A single `stego_demo.c` works identically with any backend.
+
+It currently focuses on the **signature layer only**. Additional media transport / stego functionality may be added later.
 
 ```bash
 cd unified-api
@@ -130,17 +181,7 @@ Run the additional image stego transport demo using castLabs Stardust:
 
 This flow uses the real BLS-BN158 payload generator from `unified-api/`, embeds the 184-bit `salt || sig` payload into an image using Stardust, extracts it again, and verifies the recovered payload.
 
-## Architecture
-
-### Stego Channel Pipeline
-
-```
-[pHash(image)] ──► [sign] ──► [outer RS-ECC] ──► [interleaver] ──► [stego embed]
-```
-
-Each implementation provides the signature layer. Both schemes include a 2-byte salt (configurable) to ensure similar images produce different signatures. UOV recovers the pHash from the signature (message recovery, salt embedded in digest); BLS transmits the pHash and salt explicitly alongside the signature. The outer ECC and stego embedding layers are planned future work.
-
-### Ledger-Backed Verification (Planned)
+## Detailed Ledger Architecture
 
 The stego signature provides in-image authentication, but a backend ledger enables out-of-band public key lookup, key rotation, duplicate detection, and richer verification. The full architecture integrates the stego channel with a blockchain or append-only ledger.
 
