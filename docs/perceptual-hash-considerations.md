@@ -131,6 +131,63 @@ Most classical perceptual hashes (aHash, dHash, pHash, wHash) produce only 64 bi
 
 **This is why we need either larger hashes, multiple hashes, or both.**
 
+## Salt Reconsideration
+
+The salt was originally introduced to ensure distinct signatures when the same pHash is signed for different images. However, the security picture changes when we consider multi-hash strategies:
+
+### The salt costs pHash capacity in UOV
+
+With the salt-in-digest architecture, each byte of salt steals one byte from the recoverable pHash:
+
+| Variant | With 2B salt | Without salt | Capacity gained |
+|---|---|---|---|
+| UOV-80 | 18 B = 144 bits | **20 B = 160 bits** | +16 bits (+2 bytes) |
+| UOV-100 | 23 B = 184 bits | **25 B = 200 bits** | +16 bits (+2 bytes) |
+
+Those extra 2 bytes are significant — they can accommodate an additional small hash component (e.g., colorHash truncated to 2 bytes = 16 bits, adding ~8 bits of independent collision resistance).
+
+### Near-duplicate prohibition replaces the salt
+
+The salt's original purpose was to prevent identical signatures for the same pHash. But the ledger's `(pHash, salt)` duplicate detection already prevents re-registration. If we instead enforce **near-duplicate prohibition** — rejecting any new image whose pHash is identical or nearly identical to an already-registered pHash — the salt becomes unnecessary:
+
+- **Same image, different salt**: previously allowed (different signatures). Now: rejected by near-duplicate detection.
+- **Same image, no salt**: produces the same signature. Rejected by duplicate detection on the pHash alone.
+- **Different image, same pHash (collision)**: still rejected by duplicate detection — which is correct behavior.
+
+This shifts the duplicate detection key from `(pHash, salt)` to just `pHash` (or a fuzzy match on the pHash).
+
+### BLS alternative salt placement
+
+For BLS, there is an additional option: **move the salt outside the signed payload**. Instead of `sig = BLS_sign(sk, pHash || salt)`, use:
+
+```text
+sig = BLS_sign(sk, pHash)
+payload = [sig] || [salt]        (salt appended after signature, not covered by sig)
+```
+
+Or for ledger duplicate detection purposes:
+
+```text
+sig = BLS_sign(sk, pHash)
+ledger_dedup_key = H(pHash || salt)
+```
+
+This means:
+- The signature covers **only the pHash** — the pHash can be **any length**
+- The salt is still available for duplicate detection but doesn't constrain the signed data
+- The salt doesn't need to be in the stego payload at all (it can live in the ledger record)
+
+**This is NOT possible with UOV** because UOV's message recovery (`P(w)`) produces a fixed-size output — whatever bytes are in the digest are all the verifier can recover. If the salt is not in the digest, the verifier has no way to reconstruct the full signed message to verify against.
+
+### Summary: salt options per scheme
+
+| Scheme | Option A (current) | Option B (salt-free) | Option C (BLS: salt after sig) |
+|---|---|---|---|
+| **UOV** | Salt in digest; pHash = M - salt bytes | No salt; pHash = full M bytes; deduplicate on pHash alone | N/A (not possible) |
+| **BLS** | Salt in signed payload; pHash length constrained | No salt; sign pHash directly | Salt appended after sig or stored in ledger; pHash any length |
+
+**Recommendation**: Remove the salt from UOV to maximize pHash capacity. For BLS, use Option C (sign pHash directly, salt outside signature) to allow arbitrary-length pHashes.
+
 ## Strategy 1: Multi-Hash Combination
 
 Combining multiple independently-designed perceptual hash algorithms dramatically increases collision resistance because an attacker must find a single image that collides with ALL hashes simultaneously.
@@ -168,13 +225,18 @@ The security benefit of combining hashes depends on their independence. If two h
 
 ### Recommended multi-hash combinations
 
-| Combination | Total bytes | Effective collision resistance | Fits UOV-80 (18 B) | Fits UOV-100 (23 B) | Properties |
-|---|---|---|---|---|---|
-| pHash (8B) + colorHash (8B) | 16 B | ~2^57 (with tolerance) | Yes | Yes | Luminance structure + color distribution |
-| pHash (8B) + DinoHash (12B) | 20 B | ~2^72 (with tolerance) | No | Yes (truncated) | Classical + neural; good independence |
-| DinoHash (12B) + colorHash (8B) | 20 B | ~2^72 | No | Yes (truncated) | Neural robustness + color channel |
-| pHash (8B) + BlockHash (8B) + colorHash (8B) | 24 B | ~2^86 | No | No (BLS only) | Three independent signals |
-| DinoHash (12B) | 12 B | ~2^43 (with tolerance) | Yes | Yes | Single hash, best robustness |
+The table below uses the **salt-free** capacity (UOV-80: 20 B, UOV-100: 25 B). With 2B salt the capacity is 2 bytes less. BLS with salt-outside-sig has no pHash size limit.
+
+| Combination | Total bytes | Collision bits (strict) | With ~10% tol. | Fits UOV-80 (20 B) | Fits UOV-100 (25 B) | Properties |
+|---|---|---|---|---|---|---|
+| DinoHash (12B) | 12 B | 2^48 | ~2^43 | Yes | Yes | Single hash, best robustness; minimal |
+| pHash (8B) + colorHash (8B) | 16 B | 2^64 | ~2^57 | Yes | Yes | Luminance + color; high independence |
+| pHash (8B) + DinoHash (12B) | 20 B | 2^80 | ~2^72 | **Exact fit** | Yes | Classical + neural; strong |
+| DinoHash (12B) + colorHash (8B) | 20 B | 2^80 | ~2^72 | **Exact fit** | Yes | Neural + color; strong |
+| pHash (8B) + DinoHash (12B) + colorHash (4B) | 24 B | 2^96 | ~2^86 | No | Yes (24 < 25) | Three signals; excellent |
+| pHash (8B) + DinoHash (12B) + colorHash (5B) | 25 B | 2^100 | ~2^90 | No | **Exact fit** | Three signals; excellent |
+| pHash (8B) + DinoHash (12B) + colorHash (8B) | 28 B | 2^112 | ~2^100 | No | No (BLS only) | Full three-hash; maximum |
+| 3×3 grid of pHash | 72 B | 2^288 | ~2^259 | No | No (BLS only) | Spatial localization |
 
 ### Suspicious correlation detection
 
@@ -297,21 +359,26 @@ An additional layer: embed a second, independent hash in the stego channel using
 
 ## Collision Resistance Budget
 
-Given our signature scheme constraints, here's the collision resistance budget for different configurations:
+Given our signature scheme constraints (using salt-free capacity), here's the collision resistance budget:
 
-| Configuration | Total hash bytes | Effective collision bits (est. with ~10% tolerance) | Fits in stego channel? |
-|---|---|---|---|
-| Single pHash | 8 B | ~29 | UOV: yes; dangerously low collision resistance |
-| Single DinoHash | 12 B | ~43 | UOV: yes; acceptable for moderate security |
-| pHash + colorHash | 16 B | ~57 | UOV-80: yes; reasonable |
-| DinoHash + colorHash (truncated) | 18 B | ~65 | UOV-80: exact fit; good |
-| pHash + DinoHash | 20 B | ~72 | UOV-100 (truncated 3B): good |
-| DinoHash + colorHash | 20 B | ~72 | UOV-100 (truncated 3B): good |
-| pHash + DinoHash + colorHash | 28 B | ~100 | BLS with ledger: excellent |
-| 3×3 grid of pHash | 72 B | ~200+ | BLS with ledger: very strong |
-| Grid + ROI + multi-algorithm | variable | very high | BLS with ledger only |
+| Configuration | Total hash bytes | Collision bits (strict) | Est. with ~10% tol. | Fits UOV-80 (20 B) | Fits UOV-100 (25 B) | Fits BLS (any) |
+|---|---|---|---|---|---|---|
+| Single pHash | 8 B | 2^32 | ~2^29 | Yes | Yes | Yes |
+| Single DinoHash | 12 B | 2^48 | ~2^43 | Yes | Yes | Yes |
+| pHash + colorHash | 16 B | 2^64 | ~2^57 | Yes | Yes | Yes |
+| pHash + DinoHash | 20 B | 2^80 | ~2^72 | Exact fit | Yes | Yes |
+| DinoHash + colorHash | 20 B | 2^80 | ~2^72 | Exact fit | Yes | Yes |
+| pHash + DinoHash + colorHash (5B) | 25 B | 2^100 | ~2^90 | No | Exact fit | Yes |
+| pHash + DinoHash + colorHash (8B) | 28 B | 2^112 | ~2^100 | No | No | Yes |
+| 3×3 grid of pHash | 72 B | 2^288 | ~2^259 | No | No | Yes |
+| Grid + ROI + multi-algorithm | variable | very high | very high | No | No | Yes |
 
-**Key insight**: For UOV (where the hash must fit in the stego payload), multi-hash combinations of 2-3 small hashes are the practical ceiling. For BLS with ledger-stored pHash, much richer hash compositions are possible because the hash doesn't need to fit in the stego channel.
+**Key insights**:
+
+- For **UOV-80** (20 B without salt): two-hash combinations up to 20 B. The sweet spot is **pHash + DinoHash** or **DinoHash + colorHash** at exactly 20 B with ~2^72 collision resistance (with tolerance).
+- For **UOV-100** (25 B without salt): three-hash combinations fit. **pHash + DinoHash + colorHash (5B)** at 25 B gives ~2^90 collision resistance with tolerance.
+- For **BLS** (unlimited pHash with salt-outside-sig): arbitrarily rich hash compositions. The pHash is stored in the ledger, not in the stego channel.
+- Single 8-byte classical hashes (pHash alone) are **dangerously weak** (~2^29 with tolerance). Never use a single classical hash in production.
 
 ## Future Work: Empirical Testing
 
@@ -325,57 +392,47 @@ The tolerance penalties and effective collision resistance estimates above are t
 
 ## Size constraints by scheme
 
-Different signature schemes impose different practical limits on the usable perceptual hash size.
+Different signature schemes impose different practical limits on the usable perceptual hash size. The table below reflects the **salt-free** option (see "Salt Reconsideration" above).
 
 ### UOV
 
-UOV with salt-in-digest recovers only a limited number of hash bytes:
+UOV recovers the pHash from the signature via the public map `P(w)`. The output size is fixed at `_PUB_M_BYTE`:
 
-| Variant | Max pHash bytes | Max pHash bits |
+| Variant | With 2B salt (current) | Without salt (recommended) |
 |---|---|---|
-| UOV-80 | 18 | 144 |
-| UOV-100 | 23 | 184 |
+| UOV-80 | 18 B = 144 bits | **20 B = 160 bits** |
+| UOV-100 | 23 B = 184 bits | **25 B = 200 bits** |
 
-If the pHash exceeds that limit, it must either be rejected or truncated. In this repository, oversized UOV pHashes are **rejected**, not silently truncated.
+If the pHash exceeds the limit, it is **rejected** (not silently truncated).
 
 ### BLS
 
-BLS does not recover the pHash from the signature, so the pHash can be:
+BLS does not recover the pHash from the signature. With salt-outside-sig (Option C), the signature covers only the pHash, which can be:
 
+- any length (no UOV-style constraint)
 - embedded in the payload, or
 - omitted from the payload and retrieved from the ledger
 
-This means BLS does **not** impose a practical pHash size limit in the same way UOV does.
+BLS imposes **no practical pHash size limit**.
 
-## Truncation trade-offs
+## Scheme comparison with multi-hash strategies
 
-Truncating a perceptual hash reduces discriminative power.
-
-- Shorter hashes use less payload space
-- Longer hashes separate near-duplicates from unrelated images better
-
-In this repository:
-
-- UOV-80 cannot carry a full 184-bit pHash
-- UOV-100 can carry up to 184 bits
-- BLS can support larger pHashes because it does not rely on message recovery
-
-## Scheme comparison relevance
-
-Perceptual hash choice is one of the main reasons different schemes remain useful:
-
-- **UOV-80**: most bandwidth-efficient post-quantum option, but max 144-bit pHash
-- **UOV-100**: supports 184-bit pHash, still post-quantum, but larger payload
-- **BLS-BN158**: smallest non-PQ payload when pHash is not embedded; pHash can live in the ledger
-- **BLS12-381**: stronger classical security than BN158, still flexible on pHash size
+| Scheme | Max pHash (salt-free) | Best multi-hash fit | Collision resistance (with ~10% tolerance) | Stego payload |
+|---|---|---|---|---|
+| **UOV-80** | 20 B = 160 bits | pHash (8B) + DinoHash (12B) | ~2^72 | 400 bits (sig only) |
+| **UOV-100** | 25 B = 200 bits | pHash (8B) + DinoHash (12B) + colorHash (5B) | ~2^90 | 504 bits (sig only) |
+| **BLS-BN158** (no embed) | Unlimited | Any combination; stored in ledger | Depends on hash choice; can be very high | 168 bits (sig only) |
+| **BLS12-381** (no embed) | Unlimited | Any combination; stored in ledger | Depends on hash choice; can be very high | 392 bits (sig only) |
 
 ## Practical recommendation
 
-For current image use:
+For production image authentication:
 
-- if you need **post-quantum** and can accept a **144-bit pHash**, use **UOV-80**
-- if you need **post-quantum** and require a **184-bit pHash**, use **UOV-100**
-- if you want the **smallest stego payload** and can load pHash from the ledger, use **BLS-BN158** with `embed_phash=0`
-- if you want stronger classical security than BN158, use **BLS12-381**
+- **Never use a single 8-byte classical hash** (pHash, dHash, aHash alone). Collision resistance with tolerance is ~2^29 — dangerously weak.
+- **Minimum**: DinoHash alone (12 B, ~2^43 with tolerance). Acceptable for low-security applications.
+- **Recommended for UOV-80**: pHash (8B) + DinoHash (12B) = 20 B, ~2^72 with tolerance. Remove salt to fit.
+- **Recommended for UOV-100**: pHash (8B) + DinoHash (12B) + colorHash (5B) = 25 B, ~2^90 with tolerance. Remove salt to fit.
+- **Recommended for BLS**: pHash + DinoHash + colorHash (full 8B) + optional spatial hashes. Store in ledger. No size constraint.
+- **For maximum security**: grid-based spatial hashing + multi-algorithm + ROI. BLS with ledger only.
 
 For video, the same considerations apply to each interval hash or to the Merkle-root commitment derived from them.
