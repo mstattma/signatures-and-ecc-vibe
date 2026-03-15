@@ -1,0 +1,217 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { decodeAbiParameters, encodePacked, keccak256, parseAbi } from "viem";
+import { usePublicClient } from "wagmi";
+import externalContracts from "~~/contracts/externalContracts";
+import { useTargetNetwork } from "~~/hooks/scaffold-eth";
+
+const resolverAbi = parseAbi([
+  "function pHashSaltIndex(bytes32) view returns (bytes32)",
+  "function sigPrefixIndex(bytes16) view returns (bytes32)",
+]);
+
+const easAbi = parseAbi([
+  "function getAttestation(bytes32 uid) view returns ((bytes32 uid, bytes32 schema, uint64 time, uint64 expirationTime, uint64 revocationTime, bytes32 refUID, address attester, address recipient, bool revocable, bytes data))",
+]);
+
+const IMAGE_ATTESTATION_TYPES = [
+  { type: "bytes16", name: "sigPrefix" },
+  { type: "bytes", name: "signature" },
+  { type: "uint8", name: "scheme" },
+  { type: "bytes", name: "publicKey" },
+  { type: "bytes24", name: "pHash" },
+  { type: "bytes2", name: "salt" },
+  { type: "bytes32", name: "fileHash" },
+  { type: "bytes32", name: "metadataCID" },
+] as const;
+
+const EAS_ADDRESSES: Record<number, `0x${string}`> = {
+  84532: "0x4200000000000000000000000000000000000021",
+  8453: "0x4200000000000000000000000000000000000021",
+};
+
+const SCHEME_NAMES: Record<number, string> = {
+  0: "UOV-80",
+  1: "UOV-100",
+  2: "BLS-BN158",
+  3: "BLS12-381",
+};
+
+function normalizeHex(input: string) {
+  return input.startsWith("0x") ? input : `0x${input}`;
+}
+
+export function ImageSearch() {
+  const publicClient = usePublicClient();
+  const { targetNetwork } = useTargetNetwork();
+  const chainId = targetNetwork.id;
+  const resolver = (externalContracts as any)?.[chainId]?.ImageAuthResolver;
+  const easAddress = EAS_ADDRESSES[chainId];
+
+  const [signature, setSignature] = useState("");
+  const [sigSalt, setSigSalt] = useState("");
+  const [phash, setPhash] = useState("");
+  const [phashSalt, setPhashSalt] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<any | null>(null);
+
+  const resolverAddress = resolver?.address as `0x${string}` | undefined;
+
+  const canSearch = useMemo(() => !!publicClient && !!resolverAddress && !!easAddress, [publicClient, resolverAddress, easAddress]);
+
+  const lookupBySignature = async () => {
+    if (!canSearch || !resolverAddress || !publicClient || !easAddress) return;
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const sigHex = normalizeHex(signature) as `0x${string}`;
+      const prefix = (`0x${sigHex.slice(2, 34)}`) as `0x${string}`;
+
+      const uid = await publicClient.readContract({
+        address: resolverAddress,
+        abi: resolverAbi,
+        functionName: "sigPrefixIndex",
+        args: [prefix as `0x${string}`],
+      });
+
+      if (uid === "0x0000000000000000000000000000000000000000000000000000000000000000") {
+        setError("No image record found for that signature prefix on this chain.");
+        return;
+      }
+
+      const att = await publicClient.readContract({
+        address: easAddress,
+        abi: easAbi,
+        functionName: "getAttestation",
+        args: [uid],
+      });
+
+      const decoded = decodeAbiParameters(IMAGE_ATTESTATION_TYPES as any, att.data as `0x${string}`);
+      setResult({
+        lookup: "signature",
+        uid,
+        attestation: att,
+        decoded,
+        queriedSalt: sigSalt || null,
+      });
+    } catch (e: any) {
+      setError(e?.shortMessage || e?.message || "Signature lookup failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const lookupByPhash = async () => {
+    if (!canSearch || !resolverAddress || !publicClient) return;
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const phashHex = normalizeHex(phash);
+      const saltHex = normalizeHex(phashSalt || "0x0000");
+      let pHash24 = phashHex;
+      while (pHash24.length < 50) pHash24 += "0";
+      const paddedSalt = saltHex.length === 4 ? `${saltHex}00` : saltHex;
+      const key = keccak256(encodePacked(["bytes24", "bytes2"], [pHash24 as `0x${string}`, paddedSalt as `0x${string}`]));
+
+      const uid = await publicClient.readContract({
+        address: resolverAddress,
+        abi: resolverAbi,
+        functionName: "pHashSaltIndex",
+        args: [key],
+      });
+
+      if (uid === "0x0000000000000000000000000000000000000000000000000000000000000000") {
+        setError("No image record found for that (pHash, salt) on this chain.");
+        return;
+      }
+
+      const att = await publicClient.readContract({
+        address: easAddress!,
+        abi: easAbi,
+        functionName: "getAttestation",
+        args: [uid],
+      });
+
+      const decoded = decodeAbiParameters(IMAGE_ATTESTATION_TYPES as any, att.data as `0x${string}`);
+      setResult({
+        lookup: "phash",
+        uid,
+        attestation: att,
+        decoded,
+        computedKey: key,
+      });
+    } catch (e: any) {
+      setError(e?.shortMessage || e?.message || "pHash lookup failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!resolverAddress) {
+    return (
+      <div className="alert alert-info mt-6">
+        <span>
+          No <code>ImageAuthResolver</code> is deployed for the current chain ({targetNetwork.name}).
+          This page becomes active on testnets/mainnets where EAS + resolver are deployed.
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-6 p-6">
+      <div className="card bg-base-200 shadow-xl">
+        <div className="card-body">
+          <h2 className="card-title">Search by Signature</h2>
+          <p className="text-sm text-base-content/70">Search uses the first 16 bytes of the signature (sig prefix) via the resolver index. Salt is optional here and only used as an operator note.</p>
+          <div className="flex flex-col gap-2">
+            <input className="input input-bordered font-mono text-sm" placeholder="Signature hex (0x...)" value={signature} onChange={e => setSignature(e.target.value)} />
+            <input className="input input-bordered font-mono text-sm" placeholder="Salt hex (optional, 0x...)" value={sigSalt} onChange={e => setSigSalt(e.target.value)} />
+            <button className="btn btn-primary" disabled={!signature || loading || !canSearch} onClick={lookupBySignature}>Search by Signature</button>
+          </div>
+        </div>
+      </div>
+
+      <div className="card bg-base-200 shadow-xl">
+        <div className="card-body">
+          <h2 className="card-title">Search by pHash + Salt</h2>
+          <p className="text-sm text-base-content/70">Computes <code>keccak256(bytes24(pHash) || bytes2(salt))</code> and queries the resolver&apos;s authoritative per-chain dedup index.</p>
+          <div className="flex flex-col gap-2">
+            <input className="input input-bordered font-mono text-sm" placeholder="pHash hex (0x...)" value={phash} onChange={e => setPhash(e.target.value)} />
+            <input className="input input-bordered font-mono text-sm" placeholder="Salt hex (0x..., usually 1-2 bytes)" value={phashSalt} onChange={e => setPhashSalt(e.target.value)} />
+            <button className="btn btn-primary" disabled={!phash || !phashSalt || loading || !canSearch} onClick={lookupByPhash}>Search by pHash + Salt</button>
+          </div>
+        </div>
+      </div>
+
+      {loading && <div className="flex justify-center"><span className="loading loading-spinner loading-lg" /></div>}
+      {error && <div className="alert alert-error"><span>{error}</span></div>}
+
+      {result && (
+        <div className="card bg-base-200 shadow-xl">
+          <div className="card-body">
+            <h2 className="card-title">Image Record</h2>
+            <div className="grid gap-3 md:grid-cols-2 text-sm">
+              <div><strong>Lookup mode:</strong> {result.lookup}</div>
+              <div><strong>Attestation UID:</strong> <code className="break-all">{result.uid}</code></div>
+              <div><strong>Attester:</strong> <code className="break-all">{result.attestation.attester}</code></div>
+              <div><strong>Timestamp:</strong> {new Date(Number(result.attestation.time) * 1000).toLocaleString()}</div>
+              <div><strong>Scheme:</strong> {SCHEME_NAMES[Number(result.decoded[2])] || `Unknown (${result.decoded[2]})`}</div>
+              <div><strong>Salt:</strong> <code>{result.decoded[5]}</code></div>
+              <div className="md:col-span-2"><strong>Signature prefix:</strong> <code className="break-all">{result.decoded[0]}</code></div>
+              <div className="md:col-span-2"><strong>Signature:</strong> <code className="break-all">{result.decoded[1]}</code></div>
+              <div className="md:col-span-2"><strong>Public key:</strong> <code className="break-all">{result.decoded[3]}</code></div>
+              <div className="md:col-span-2"><strong>pHash:</strong> <code className="break-all">{result.decoded[4]}</code></div>
+              <div className="md:col-span-2"><strong>fileHash:</strong> <code className="break-all">{result.decoded[6]}</code></div>
+              <div className="md:col-span-2"><strong>metadataCID:</strong> <code className="break-all">{result.decoded[7]}</code></div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
