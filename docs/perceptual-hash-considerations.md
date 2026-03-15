@@ -152,10 +152,15 @@ Even 1 byte of gained capacity is significant — it can accommodate an addition
 
 ### Why we still need a salt (at least 1 byte)
 
-The original motivation for removing the salt was that near-duplicate prohibition by the ledger could replace it. However, the ledger's cross-chain duplicate detection uses a **Bloom filter**, which produces false positives. Without a salt:
+The original motivation for removing the salt was that near-duplicate prohibition by the ledger could replace it. However, we still need it for two reasons:
+
+**Reason 1: Bloom filter false positives.** The ledger's cross-chain duplicate detection uses a Bloom filter, which produces false positives. Bloom filter results are **deterministic** — the same input always produces the same result. Without a salt:
 
 - A Bloom filter false positive on a pHash is a **dead end** — the pHash is computed from the image and cannot be changed.
-- The signer would have to reject the image entirely, even though no duplicate actually exists.
+- The signer would have to query the authoritative per-chain resolver to distinguish a false positive from a real duplicate. This works for the local chain, but for cross-chain detection the resolver only covers one chain — the off-chain indexer is needed for a definitive cross-chain answer.
+- If the indexer is unavailable and the Bloom filter says "might exist", there is no way to proceed without a salt to retry.
+
+**Reason 2: Intentional re-signing.** When the same perceptual hash legitimately applies to multiple different images (e.g., the same scene photographed twice, or the same pHash across different crops), the salt allows registering each one separately.
 
 With even a 1-byte (8-bit) salt providing 256 possible values:
 
@@ -163,7 +168,9 @@ With even a 1-byte (8-bit) salt providing 256 possible values:
 - At <1% false positive rate, the expected number of retries is <1.01 (almost never needs even one retry).
 - The probability of all 256 salt values producing false positives is ~(0.01)^256 ≈ 0.
 
-**1 byte of salt is sufficient.** It costs only 8 bits of pHash capacity (vs 16 bits for the current 2-byte salt) while completely eliminating the Bloom filter false positive problem.
+**Note**: In the normal registration flow, Bloom false positives do NOT require salt retries — they are resolved by checking the authoritative per-chain resolver index. The salt retry path is a fallback for when the indexer is unavailable and the resolver can't provide a cross-chain answer. See the [Ethereum Ledger Proposal](ethereum-ledger-proposal.md#combined-cross-chain-dedup-flow) for the full three-layer dedup flow.
+
+**1 byte of salt is sufficient.** It costs only 8 bits of pHash capacity (vs 16 bits for the current 2-byte salt) while providing retry capability for both Bloom FP fallback and intentional re-signing.
 
 ### BLS alternative salt placement
 

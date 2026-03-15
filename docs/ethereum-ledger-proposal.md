@@ -456,29 +456,38 @@ Client wants to register image on Arbitrum Nova:
 
 1. Fast path: query off-chain indexer (all chains)
    ├── "Not found" → continue to step 2
-   └── "Found" → reject or retry with new salt
+   └── "Found on chain X" → genuine duplicate → retry with new salt
 
-2. Trustless check: call bloomFilter.mightContain() on Nova
-   ├── false → definitely unique → proceed
-   └── true → possible duplicate or false positive
-       └── Retry with new salt (go to step 1)
+2. Trustless pre-filter: call bloomFilter.mightContain() on Nova
+   ├── false → definitely not on any synced chain → proceed to step 4
+   └── true → might exist (or false positive) → continue to step 3
 
-3. Register on Nova (resolver also calls bloomFilter.add())
+3. Authoritative check: query per-chain resolver pHashSaltIndex on Nova
+   ├── Resolver confirms (non-zero UID) → genuine local duplicate → retry with new salt
+   └── Resolver says no (zero) → Bloom false positive → safe to proceed to step 4
 
-4. Background: relayer syncs Nova's new Bloom entry to Base and Optimism
+4. Register on Nova (resolver adds to pHashSaltIndex + calls bloomFilter.add())
+
+5. Background: relayer syncs Nova's new Bloom entry to Base and Optimism
 ```
+
+**Important**: Bloom filter results are deterministic — the same input always returns the same result. A Bloom false positive does NOT require a salt retry; it is resolved by checking the authoritative per-chain resolver index (step 3). Salt retries only happen for genuine duplicates (step 1 or step 3 confirms).
 
 **Why both layers?**
 
-| Scenario | Indexer | Bloom filter |
-|---|---|---|
-| Normal operation | Handles 99%+ of dedup checks instantly | Serves as trustless fallback |
-| Indexer down | Unavailable | Bloom filter still works (on-chain) |
-| Indexer lies (allows dup) | Duplicate passes fast path | Bloom filter catches it at step 2 |
-| Bloom false positive | N/A (indexer gave definitive answer) | Client retries with new salt (harmless) |
-| Cross-chain race condition | Indexer may have stale data | Bloom sync lag (~minutes) is similar; per-chain resolver is final authority |
+| Scenario | Indexer | Bloom filter | Resolver |
+|---|---|---|---|
+| Normal operation (unique) | "Not found" → proceed | Likely "false" → skip resolver | Not needed |
+| Normal operation (duplicate) | "Found" → retry salt | N/A | N/A |
+| Indexer down | Unavailable | "false" → proceed; "true" → check resolver | Final authority (on-chain) |
+| Indexer lies (allows dup) | Duplicate passes fast path | "true" → triggers resolver check | Catches the duplicate |
+| Bloom false positive | "Not found" → proceed | "true" → triggers resolver check | "No" → FP confirmed, proceed safely |
+| Cross-chain race condition | May have stale data | Bloom sync lag (~minutes) | Authoritative for local chain; cross-chain needs indexer |
 
-The two layers are complementary: the indexer is fast and definitive but trusted; the Bloom filter is trustless but probabilistic and slightly delayed. Together they provide both speed and integrity.
+The three layers are complementary:
+- **Indexer**: fast (~100ms), cross-chain, definitive, but trusted
+- **Bloom filter**: trustless, probabilistic, pre-filters most queries (saves resolver reads)
+- **Per-chain resolver**: trustless, authoritative, zero false positives/negatives on that chain
 
 #### Security aspect: perceptual hash collisions
 
