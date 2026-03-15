@@ -168,6 +168,52 @@ Stealthy changes intended to alter meaning while preserving appearance.
 
 Total: ~1300 source images × ~50 transforms = ~65,000 image pairs.
 
+### Recommended image sources
+
+Use multiple sources because no single dataset stresses all failure modes.
+
+#### 1. Open datasets (recommended defaults)
+
+| Source | License / access | Best for | Notes |
+|---|---|---|---|
+| **COCO 2017** | Open research dataset | Natural photos | Strong baseline corpus; broad scene diversity |
+| **OpenImages** (curated subset) | Open research dataset | Natural photos, object diversity | Good for object insert/remove evaluation |
+| **ImageNet val subset** | Research use | Object-centric photos | Useful for semantic edits and hard negatives |
+| **TextCaps / DocVQA / screenshots you create** | Mixed / self-made | Text-heavy content | Important for OCR/text-replacement attacks |
+| **FFHQ / CelebA** (carefully selected subset) | Research use | Faces / face-swap | Needed for portrait and identity-sensitive changes |
+
+#### 2. Self-generated / controlled corpora (strongly recommended)
+
+| Source | Why it matters |
+|---|---|
+| **Your own camera photos** | Realistic device pipeline, EXIF, HDR/SDR, compression chain |
+| **Synthetic screenshots** (browser/UI/docs generated locally) | Deterministic text-heavy images for exact text-edit tests |
+| **Meme/template corpus** | Hard negatives where layout remains constant but text changes |
+| **Product / label photos** | Strong for logo/label replacement and subtle text edits |
+
+#### 3. Recommended acquisition strategy
+
+For the first serious benchmark run, I would use:
+
+- **50 COCO / OpenImages photos**
+- **25 self-generated screenshots / text-heavy images**
+- **25 face images**
+- **20 hard negatives / template pairs**
+- **20 of your own real camera photos**
+
+That gives a compact but useful pilot dataset of **~140 source images**.
+
+#### 4. Why not rely on a single benchmark image?
+
+The existing lightweight benchmark in `perceptual-fuzzy-hash-test-vibe` is very useful for exploratory analysis, but a single synthetic image cannot answer:
+
+- whether bit flips are stable across content classes
+- how much performance depends on faces, text, or object density
+- whether some hashes fail only on real photos but not synthetic graphics
+- how often false positives occur on visually similar but unrelated content
+
+The advanced benchmark should therefore be **multi-image from the beginning**.
+
 ## Phase 4: Output Schema
 
 For every (source image, transform, hash algorithm, region mode) tuple, record one row:
@@ -387,3 +433,107 @@ make all
 6. **Regional sensitivity maps** showing which grid cells respond to which edits
 7. **Collision resistance estimates** with measured (not theoretical) tolerance
 8. **Final hash combination recommendation** for UOV-80, UOV-100, and BLS configurations
+
+## Concrete Implementation Checklist
+
+This is the recommended task order for implementing the advanced benchmark in the parallel repository.
+
+### Step 1: create the advanced benchmark package
+
+- [ ] add `advanced_benchmark/README.md`
+- [ ] add `advanced_benchmark/config.py`
+- [ ] add `advanced_benchmark/schema.py`
+- [ ] add `advanced_benchmark/datasets.py`
+- [ ] add `advanced_benchmark/transforms.py`
+- [ ] add `advanced_benchmark/hashes.py`
+- [ ] add `advanced_benchmark/regions.py`
+- [ ] add `advanced_benchmark/pipeline.py`
+- [ ] add `advanced_benchmark/analysis.py`
+
+### Step 2: freeze the first benchmark configuration
+
+- [ ] primary hashes: pHash, dHash, dHash-FS64, colorHash, BlockHash, DinoHash-96, DinoHash-128, PDQ
+- [ ] primary composites: pHash+ColorHash, dHash-FS64+ColorHash, pHash+DinoHash-96, pHash+DinoHash-96+ColorHash, dHash-FS64+BlockHash+ColorHash
+- [ ] primary regions: global, grid-3x3
+- [ ] pilot dataset: ~140 source images
+
+### Step 3: implement deterministic transform generation (Wave 1 only)
+
+- [ ] JPEG/WebP/AVIF round-trips
+- [ ] resize / upscale / aspect-change
+- [ ] social-media crops (square, portrait, landscape, off-center)
+- [ ] YUV420 / YUV444 round-trips
+- [ ] gamma, contrast, saturation, white balance
+- [ ] Stardust embed/extract transform
+- [ ] write transform manifest with IDs and parameters
+
+### Step 4: implement hash adapters
+
+- [ ] wrap existing pHash / dHash / colorHash / BlockHash code
+- [ ] import or port dHash-FS64 and dHash-FS128 from the same repo
+- [ ] integrate configurable DinoHash (96, 128, 256 bit variants)
+- [ ] integrate PDQ
+- [ ] ensure all adapters expose:
+  - [ ] `name`
+  - [ ] `bits`
+  - [ ] `compute(image)`
+  - [ ] `distance(a, b)`
+
+### Step 5: implement output schema and persistence
+
+- [ ] define canonical row schema
+- [ ] store results as Parquet
+- [ ] store raw hashes and pairwise distances separately
+- [ ] store XOR masks and changed bit positions
+
+### Step 6: implement regional hashing
+
+- [ ] `global`
+- [ ] `grid-3x3`
+- [ ] record `roi_index` and `roi_bounds`
+- [ ] defer face/text ROI until after the pilot run
+
+### Step 7: produce the first report set
+
+- [ ] benign distance histograms per hash
+- [ ] threshold candidates per hash
+- [ ] XOR-mask / bit-flip frequency analysis
+- [ ] first correlation matrix between hash families
+- [ ] shortlist recommendation for which hashes survive to Wave 2
+
+### Step 8: add suspicious / malicious transforms
+
+- [ ] stickers, arrows, circles, text overlays, blur bars
+- [ ] object removal / insertion
+- [ ] text replacement
+- [ ] face swap
+- [ ] AI inpainting / generative fill
+- [ ] adversarial perturbation (single-hash first, then multi-hash)
+
+### Step 9: evaluate composites
+
+- [ ] pHash + ColorHash
+- [ ] dHash-FS64 + ColorHash
+- [ ] pHash + DinoHash-96
+- [ ] pHash + DinoHash-96 + ColorHash
+- [ ] dHash-FS64 + BlockHash + ColorHash
+- [ ] compare benign-vs-malicious classification quality
+
+### Step 10: decide production candidates
+
+- [ ] final recommendation for UOV-80
+- [ ] final recommendation for UOV-100
+- [ ] final recommendation for BLS + ledger
+- [ ] decide whether regional hashing is needed in phase 1 production
+
+## Suggested “Definition of Done” for the first benchmark milestone
+
+The first milestone is complete when all of the following are true:
+
+- [ ] at least 100 source images are included
+- [ ] all Wave 1 benign transforms run deterministically
+- [ ] the primary 8 single hashes run successfully
+- [ ] distances, XOR masks, and bit positions are stored in Parquet
+- [ ] at least one report is generated showing benign distance distributions
+- [ ] at least one report is generated showing per-bit flip frequencies
+- [ ] the repo can answer, with real data, whether `dHash-FS64` deserves to stay in the shortlist
