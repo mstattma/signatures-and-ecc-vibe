@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { useScaffoldReadContract, useScaffoldWriteContract } from "~~/hooks/scaffold-eth";
@@ -35,7 +36,9 @@ function KeyRow({ user, index }: { user: string; index: number }) {
       </td>
       <td>{SCHEME_NAMES[scheme] || `Unknown (${scheme})`}</td>
       <td className="font-mono text-xs break-all max-w-xs">
-        {publicKey.slice(0, 20)}...{publicKey.slice(-8)}
+        <Link href={`/images?publicKey=${encodeURIComponent(publicKey)}`} className="link link-primary">
+          {publicKey.slice(0, 20)}...{publicKey.slice(-8)}
+        </Link>
       </td>
       <td className="text-xs">{activatedDate.toLocaleString()}</td>
       <td className="text-xs">{revokedDate ? revokedDate.toLocaleString() : "-"}</td>

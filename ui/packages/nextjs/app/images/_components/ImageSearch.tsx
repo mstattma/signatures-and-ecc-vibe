@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { decodeAbiParameters, encodePacked, keccak256, parseAbi } from "viem";
 import { usePublicClient } from "wagmi";
 import externalContracts from "~~/contracts/externalContracts";
@@ -39,6 +40,7 @@ function normalizeHex(input: string) {
 }
 
 export function ImageSearch() {
+  const searchParams = useSearchParams();
   const publicClient = usePublicClient();
   const { targetNetwork } = useTargetNetwork();
   const chainId = targetNetwork.id;
@@ -49,6 +51,7 @@ export function ImageSearch() {
   const [sigSalt, setSigSalt] = useState("");
   const [phash, setPhash] = useState("");
   const [phashSalt, setPhashSalt] = useState("");
+  const [publicKeySearch, setPublicKeySearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<any | null>(null);
@@ -71,6 +74,11 @@ export function ImageSearch() {
     if (!imageEvents) return [];
     return [...imageEvents].slice(-20).reverse();
   }, [imageEvents]);
+
+  useEffect(() => {
+    const pk = searchParams.get("publicKey");
+    if (pk) setPublicKeySearch(pk);
+  }, [searchParams]);
 
   // Use a stable key to prevent infinite loops if useScaffoldEventHistory returns a new array reference
   const recentEventsKey = useMemo(() => {
@@ -288,6 +296,24 @@ export function ImageSearch() {
         </div>
       </div>
 
+      <div className="card bg-base-200 shadow-xl">
+        <div className="card-body">
+          <h2 className="card-title">Search by Public Key</h2>
+          <p className="text-sm text-base-content/70">
+            List all recently loaded image records whose attestation contains the specified public key.
+            This is useful when navigating from the Keys page.
+          </p>
+          <div className="flex flex-col gap-2">
+            <input
+              className="input input-bordered font-mono text-sm"
+              placeholder="Public key hex (0x...)"
+              value={publicKeySearch}
+              onChange={e => setPublicKeySearch(e.target.value)}
+            />
+          </div>
+        </div>
+      </div>
+
       {loading && <div className="flex justify-center"><span className="loading loading-spinner loading-lg" /></div>}
       {error && <div className="alert alert-error"><span>{error}</span></div>}
 
@@ -309,6 +335,44 @@ export function ImageSearch() {
               <div className="md:col-span-2"><strong>fileHash:</strong> <code className="break-all">{result.decoded[6]}</code></div>
               <div className="md:col-span-2"><strong>metadataCID:</strong> <code className="break-all">{result.decoded[7]}</code></div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {publicKeySearch && (
+        <div className="card bg-base-200 shadow-xl">
+          <div className="card-body">
+            <h2 className="card-title">Images for Public Key</h2>
+            {recentRecords.filter(r => String(r.decoded?.[3]).toLowerCase() === publicKeySearch.toLowerCase()).length === 0 ? (
+              <div className="text-sm text-base-content/70">No loaded image records match this public key. Recent records are searched client-side from the currently loaded chain data.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="table table-sm">
+                  <thead>
+                    <tr>
+                      <th>UID</th>
+                      <th>Salt</th>
+                      <th>Scheme</th>
+                      <th>pHash</th>
+                      <th>Attester</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recentRecords
+                      .filter(r => String(r.decoded?.[3]).toLowerCase() === publicKeySearch.toLowerCase())
+                      .map((record, idx) => (
+                        <tr key={idx}>
+                          <td><Link href={`/images/${record.uid}`} className="link link-primary text-xs break-all">{record.uid}</Link></td>
+                          <td><code className="text-xs break-all">{record.decoded[5]}</code></td>
+                          <td>{SCHEME_NAMES[Number(record.decoded[2])] || `Unknown (${record.decoded[2]})`}</td>
+                          <td><code className="text-xs break-all">{record.decoded[4]}</code></td>
+                          <td><Link href={`/keys?address=${record.att.attester}`} className="link link-primary text-xs break-all">{record.att.attester}</Link></td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}
