@@ -34,6 +34,8 @@ docker compose up -d          # Hardhat node :8545 + SE2 UI :3000
 docker compose logs -f
 ```
 
+This is the preferred development path for both ledger and UI work.
+
 ### `UOV/pqov/`
 
 ```bash
@@ -73,7 +75,7 @@ node scripts/export-abis.js      # regenerate UI contract ABIs
 
 ### `ui/`
 
-Docker-first (started by `docker compose up`). Manual fallback:
+Docker-first (preferred; started by `docker compose up`). Manual fallback:
 
 ```bash
 cd ui && yarn install && yarn workspace @se-2/nextjs dev
@@ -105,7 +107,8 @@ python3 scripts/patch_stardust.py  # apply local patches to stardust/ submodule
 - Check return codes; do not assume success.
 - Keep stack allocations conservative.
 - In `unified-api/`, keep scheme-specific code in backend files, not shared headers.
-- Respect pHash limits: UOV-80 max 18 B / 144 bits, UOV-100 max 23 B / 184 bits.
+- Respect the **current implemented** pHash limits: UOV-80 max 18 B / 144 bits, UOV-100 max 23 B / 184 bits.
+- Design docs also discuss possible future 1-byte-salt variants (19 B / 24 B), but do not assume those are implemented unless you change code and docs together.
 - Never silently truncate oversized pHashes (`ov_sign_digest` returns `-2`).
 - Note: `unified-api/Makefile` uses `-O1` due to a RELIC BLS12-381 crash at `-O2`.
 
@@ -157,6 +160,7 @@ python3 scripts/patch_stardust.py  # apply local patches to stardust/ submodule
 - Hardhat node container state is in-memory; `docker compose down` + `up` resets everything.
 - `deployment.json` bridges deploy and demo scripts; demo detects stale addresses and falls back.
 - BLS12-381 unified-api binary crashes at `-O2`; use `-O1` (documented in Makefile).
+- There is no unified fine-grained unit-test framework across the repo; for many areas, the closest “single test” is a narrow demo target (`make test SCHEME=...`, one Hardhat script, or one UI page flow).
 
 ## When You Change These, Update Docs Too
 
