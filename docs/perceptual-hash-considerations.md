@@ -118,7 +118,9 @@ For a hash with `n` effective bits (after accounting for fuzzy tolerance), the b
 | 8 B = 64 bits | 64 | 2^32 | ~58 effective | 2^29 |
 | 12 B = 96 bits | 96 | 2^48 | ~86 effective | 2^43 |
 | 16 B = 128 bits | 128 | 2^64 | ~115 effective | 2^57 |
+| 20 B = 160 bits | 160 | 2^80 | ~144 effective | 2^72 |
 | 23 B = 184 bits | 184 | 2^92 | ~166 effective | 2^83 |
+| 25 B = 200 bits | 200 | 2^100 | ~180 effective | 2^90 |
 | 32 B = 256 bits | 256 | 2^128 | ~230 effective | 2^115 |
 
 **The tolerance penalty is the critical concern.** When we allow fuzzy matching (accepting images as "authentic" even if some hash bits differ), the effective hash space shrinks dramatically. This is because an attacker doesn't need an exact collision — they just need to land within the tolerance ball.
