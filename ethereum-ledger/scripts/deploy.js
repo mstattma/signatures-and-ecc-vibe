@@ -31,7 +31,27 @@ async function main() {
   console.log("Balance:", ethers.formatEther(await ethers.provider.getBalance(deployer.address)), "ETH");
   console.log("");
 
-  // 1. Deploy KeyRegistry
+  // 1. Deploy EAS stack (local only) or use predeployed Base Sepolia system contracts
+  let easAddress = EAS_ADDRESS;
+  let schemaRegistryAddress = SCHEMA_REGISTRY_ADDRESS;
+
+  if (isLocal) {
+    console.log("--- Deploying local SchemaRegistry ---");
+    const SchemaRegistry = await ethers.getContractFactory("SchemaRegistry");
+    const schemaRegistry = await SchemaRegistry.deploy();
+    await schemaRegistry.waitForDeployment();
+    schemaRegistryAddress = await schemaRegistry.getAddress();
+    console.log("SchemaRegistry deployed to:", schemaRegistryAddress);
+
+    console.log("--- Deploying local EAS ---");
+    const EAS = await ethers.getContractFactory("EAS");
+    const eas = await EAS.deploy(schemaRegistryAddress);
+    await eas.waitForDeployment();
+    easAddress = await eas.getAddress();
+    console.log("EAS deployed to:", easAddress);
+  }
+
+  // 2. Deploy KeyRegistry
   console.log("--- Deploying KeyRegistry ---");
   const KeyRegistry = await ethers.getContractFactory("KeyRegistry");
   const keyRegistry = await KeyRegistry.deploy();
@@ -39,7 +59,7 @@ async function main() {
   const keyRegistryAddr = await keyRegistry.getAddress();
   console.log("KeyRegistry deployed to:", keyRegistryAddr);
 
-  // 2. Deploy CrossChainBloomFilter
+  // 3. Deploy CrossChainBloomFilter
   console.log("--- Deploying CrossChainBloomFilter ---");
   const BloomFilter = await ethers.getContractFactory("CrossChainBloomFilter");
   const bloomFilter = await BloomFilter.deploy();
@@ -47,22 +67,16 @@ async function main() {
   const bloomFilterAddr = await bloomFilter.getAddress();
   console.log("CrossChainBloomFilter deployed to:", bloomFilterAddr);
 
-  // 3. Deploy ImageAuthResolver
-  // On local network, skip resolver deployment (EAS not available, SchemaResolver rejects address(0))
+  // 4. Deploy ImageAuthResolver
   let resolverAddr = ethers.ZeroAddress;
-  if (!isLocal) {
-    console.log("--- Deploying ImageAuthResolver ---");
-    const Resolver = await ethers.getContractFactory("ImageAuthResolver");
-    const resolver = await Resolver.deploy(EAS_ADDRESS, keyRegistryAddr, bloomFilterAddr);
-    await resolver.waitForDeployment();
-    resolverAddr = await resolver.getAddress();
-    console.log("ImageAuthResolver deployed to:", resolverAddr);
-  } else {
-    console.log("--- Skipping ImageAuthResolver (no EAS on local network) ---");
-    console.log("  KeyRegistry and BloomFilter can be tested directly.");
-  }
+  console.log("--- Deploying ImageAuthResolver ---");
+  const Resolver = await ethers.getContractFactory("ImageAuthResolver");
+  const resolver = await Resolver.deploy(easAddress, keyRegistryAddr, bloomFilterAddr);
+  await resolver.waitForDeployment();
+  resolverAddr = await resolver.getAddress();
+  console.log("ImageAuthResolver deployed to:", resolverAddr);
 
-  // 4. Authorize adders on the Bloom filter
+  // 5. Authorize adders on the Bloom filter
   console.log("--- Authorizing on BloomFilter ---");
   if (resolverAddr !== ethers.ZeroAddress) {
     const authTx = await bloomFilter.authorizeAdder(resolverAddr);
@@ -74,22 +88,18 @@ async function main() {
   await authTx2.wait();
   console.log("  Deployer authorized");
 
-  // 5. Register schema on EAS SchemaRegistry (testnet only)
+  // 6. Register schema on EAS SchemaRegistry
   let schemaUID = "0x" + "00".repeat(32);
-  if (!isLocal) {
-    console.log("--- Registering EAS Schema ---");
-    const schemaRegistry = await ethers.getContractAt(
-      ["function register(string calldata schema, address resolver, bool revocable) external returns (bytes32)"],
-      SCHEMA_REGISTRY_ADDRESS
-    );
-    const schemaTx = await schemaRegistry.register(SCHEMA_STRING, resolverAddr, true);
-    const schemaReceipt = await schemaTx.wait();
-    const schemaRegisteredEvent = schemaReceipt.logs.find((log) => log.topics.length > 0);
-    schemaUID = schemaRegisteredEvent ? schemaRegisteredEvent.topics[1] : "unknown";
-    console.log("Schema registered, UID:", schemaUID);
-  } else {
-    console.log("--- Skipping EAS Schema Registration (local network) ---");
-  }
+  console.log("--- Registering EAS Schema ---");
+  const schemaRegistry = await ethers.getContractAt(
+    ["function register(string calldata schema, address resolver, bool revocable) external returns (bytes32)"],
+    schemaRegistryAddress
+  );
+  const schemaTx = await schemaRegistry.register(SCHEMA_STRING, resolverAddr, true);
+  const schemaReceipt = await schemaTx.wait();
+  const schemaRegisteredEvent = schemaReceipt.logs.find((log) => log.topics.length > 0);
+  schemaUID = schemaRegisteredEvent ? schemaRegisteredEvent.topics[1] : "unknown";
+  console.log("Schema registered, UID:", schemaUID);
 
   // Print summary
   console.log("");
@@ -109,8 +119,8 @@ async function main() {
     bloomFilter: bloomFilterAddr,
     resolver: resolverAddr,
     schemaUID,
-    eas: isLocal ? ethers.ZeroAddress : EAS_ADDRESS,
-    schemaRegistry: isLocal ? ethers.ZeroAddress : SCHEMA_REGISTRY_ADDRESS,
+    eas: easAddress,
+    schemaRegistry: schemaRegistryAddress,
     timestamp: new Date().toISOString(),
   };
   fs.writeFileSync("deployment.json", JSON.stringify(deployment, null, 2));

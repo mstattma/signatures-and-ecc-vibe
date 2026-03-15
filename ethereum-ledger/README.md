@@ -43,6 +43,14 @@ docker compose logs -f node    # Follow logs (see deployment output)
 
 The node is available at `http://localhost:8545`. Contracts are auto-deployed on startup. `deployment.json` is written to `ethereum-ledger/` on the host.
 
+The local deployment now includes a real EAS stack:
+
+- `SchemaRegistry`
+- `EAS`
+- `ImageAuthResolver`
+
+This means localhost now supports the same attestation/resolver flow as testnet, including image lookup by signature prefix and by `(pHash, salt)`.
+
 Run scripts against the containerized node:
 ```bash
 cd ethereum-ledger
@@ -80,7 +88,7 @@ npx hardhat run scripts/deploy.js --network localhost
 npx hardhat run scripts/demo.js --network localhost
 ```
 
-The demo reads contract addresses from `deployment.json` and reuses the deployed contracts. Each run registers a new key and image, and the Bloom filter accumulates entries across runs. If `deployment.json` is stale (node restarted), the demo detects this and falls back to fresh deployment.
+The demo reads contract addresses from `deployment.json` and reuses the deployed contracts. Each run registers a new key and image, and the Bloom filter accumulates entries across runs. If `deployment.json` is stale (node restarted), the demo detects it and tells you to re-run `deploy.js`.
 
 ### Testnet Deployment (Base Sepolia)
 
@@ -99,7 +107,7 @@ The demo reads contract addresses from `deployment.json` and reuses the deployed
    npx hardhat run scripts/demo.js --network baseSepolia
    ```
 
-On testnet, the full EAS flow is used: schema registration, resolver enforcement, and attestation creation. The demo creates a real EAS attestation and looks it up by signature prefix.
+On testnet, the same full EAS flow is used: schema registration, resolver enforcement, and attestation creation. The demo creates a real EAS attestation and looks it up by signature prefix.
 
 ## Demo Output
 
@@ -117,8 +125,8 @@ Steps:
 2. **Sign a pHash**: Simulate BLS signing of a 144-bit perceptual hash with 16-bit salt
 3. **Stego payload**: Show the 184-bit payload (salt + signature only, no pHash, no PK)
 4. **Bloom filter check**: Verify `(pHash, salt)` is unique across chains
-5. **Ledger registration**: Create EAS attestation (testnet) or direct Bloom add (local)
-6. **Verification**: Extract signature from payload, look up PK and pHash from ledger
+5. **Ledger registration**: Create EAS attestation through the resolver (localhost or testnet)
+6. **Verification**: Extract signature from payload, look up PK and pHash from the ledger via the resolver/EAS
 7. **Duplicate rejection**: Re-registration blocked; salt retry succeeds
 
 ## Project Structure

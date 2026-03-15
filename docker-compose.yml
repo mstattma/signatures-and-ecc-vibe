@@ -25,6 +25,8 @@ services:
     volumes:
       # Sync deployment.json back to host
       - ./ethereum-ledger:/host
+      # Use latest host scripts without rebuilding the image
+      - ./ethereum-ledger/scripts:/app/scripts:ro
       # Share deployment data with the UI container
       - shared-data:/shared
     # Health check: calls eth_blockNumber via JSON-RPC to verify the node is responding.

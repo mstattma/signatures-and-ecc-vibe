@@ -126,6 +126,8 @@ async function main() {
   // Try to use existing deployed contracts (from deployment.json or env)
   // Verify the contracts actually exist at the addresses (handles ephemeral hardhat restarts)
   let hasDeployedContracts = KEY_REGISTRY && BLOOM_FILTER;
+  let easAddress = deploymentAddrs.eas || EAS_ADDRESS;
+
   if (hasDeployedContracts) {
     const code = await ethers.provider.getCode(KEY_REGISTRY);
     if (code === "0x") {
@@ -152,8 +154,9 @@ async function main() {
     if (schemaUID && schemaUID !== ethers.ZeroHash) {
       console.log("  Schema UID:", schemaUID);
     }
-    if (isLocal) {
-      console.log("  (Local network: EAS attestation skipped, testing contracts directly)");
+    if (deploymentAddrs.eas && deploymentAddrs.eas !== ethers.ZeroAddress) {
+      easAddress = deploymentAddrs.eas;
+      console.log("  EAS:", easAddress);
     }
     console.log("");
   } else if (isLocal) {
@@ -161,6 +164,10 @@ async function main() {
     console.log("--- No deployment.json found, deploying fresh (ephemeral) ---");
     console.log("  Tip: run 'npx hardhat run scripts/deploy.js --network localhost'");
     console.log("  first for persistent local testing.\n");
+
+    console.log("  Fresh ephemeral localhost deployment is not supported anymore.");
+    console.log("  Run deploy.js first so local EAS + resolver are available.");
+    process.exit(1);
 
     const KR = await ethers.getContractFactory("KeyRegistry");
     keyRegistry = await KR.deploy();
@@ -264,35 +271,12 @@ async function main() {
   const fileHash = ethers.keccak256(ethers.toUtf8Bytes("simulated-image-file-content"));
   const metadataCID = ethers.keccak256(ethers.toUtf8Bytes("ipfs://Qm.../metadata.json"));
 
-  if (isLocal) {
-    // Local: directly add to bloom filter and show what the attestation would contain
-    const authTx = await bloomFilter.authorizeAdder(signer.address);
-    await authTx.wait();
-    const addTx = await bloomFilter.add(pHashSaltKey);
-    const addReceipt = await addTx.wait();
-    console.log("  Added to Bloom filter.", formatGas(addReceipt.gasUsed));
-
-    // Encode the attestation data as it would be on-chain
-    const attestationData = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["bytes16", "bytes", "uint8", "bytes", "bytes24", "bytes2", "bytes32", "bytes32"],
-      [sigPrefix, signature, SCHEME_BLS_BN158, pk, pHash24, salt, fileHash, metadataCID]
-    );
-    console.log("  Attestation data size:", ethers.getBytes(attestationData).length, "bytes");
-    console.log("  (On testnet, this would be an EAS attestation via the resolver)");
-
-    // Verify Bloom filter now contains the entry
-    const nowExists = await bloomFilter.mightContain(pHashSaltKey);
-    console.log("  Bloom filter now contains entry:", nowExists);
-
-    // Verify duplicate detection works
-    const dupCheck = await bloomFilter.mightContain(pHashSaltKey);
-    console.log("  Duplicate re-check:", dupCheck, "(should be true)");
-  } else {
-    // Testnet: create EAS attestation
+  {
+    // Create EAS attestation (works on local deployed EAS and on testnet)
     const easAbi = [
       "function attest((bytes32 schema, (address recipient, uint64 expirationTime, bool revocable, bytes32 refUID, bytes data, uint256 value) data)) external payable returns (bytes32)"
     ];
-    eas = new ethers.Contract(EAS_ADDRESS, easAbi, signer);
+    eas = new ethers.Contract(easAddress, easAbi, signer);
 
     const attestationData = ethers.AbiCoder.defaultAbiCoder().encode(
       ["bytes16", "bytes", "uint8", "bytes", "bytes24", "bytes2", "bytes32", "bytes32"],
@@ -342,7 +326,7 @@ async function main() {
   console.log("  Extracted signature:", ethers.hexlify(extractedSig));
   console.log("  Extracted sig prefix:", extractedSigPrefix);
 
-  if (!isLocal && resolver) {
+  if (resolver) {
     // Look up on ledger
     const uid = await resolver.sigPrefixIndex(extractedSigPrefix);
     console.log("  Ledger lookup by sig prefix → UID:", uid);
@@ -352,7 +336,7 @@ async function main() {
       const easReadAbi = [
         "function getAttestation(bytes32 uid) external view returns ((bytes32 uid, bytes32 schema, uint64 time, uint64 expirationTime, uint64 revocationTime, bytes32 refUID, address attester, address recipient, bool revocable, bytes data))"
       ];
-      const easRead = new ethers.Contract(EAS_ADDRESS, easReadAbi, signer);
+      const easRead = new ethers.Contract(easAddress, easReadAbi, signer);
       const att = await easRead.getAttestation(uid);
 
       // Decode the attestation data
@@ -384,10 +368,6 @@ async function main() {
       const keyValid = await keyRegistry.isKeyValidAt(ledgerPK, att.time);
       console.log("  Key valid at attestation time:", keyValid);
     }
-  } else {
-    console.log("  (On local network: simulating ledger lookup)");
-    console.log("  Verifier would query EAS by sig prefix to get PK and pHash");
-    console.log("  Then verify: BLS_verify(sig, pHash || salt, PK)");
   }
 
   // ============================================================

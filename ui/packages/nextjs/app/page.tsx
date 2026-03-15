@@ -5,7 +5,7 @@ import { Address } from "@scaffold-ui/components";
 import type { NextPage } from "next";
 import { hardhat } from "viem/chains";
 import { useAccount } from "wagmi";
-import { BugAntIcon, MagnifyingGlassIcon, KeyIcon, UsersIcon, FunnelIcon } from "@heroicons/react/24/outline";
+import { BugAntIcon, MagnifyingGlassIcon, KeyIcon, UsersIcon, FunnelIcon, PhotoIcon } from "@heroicons/react/24/outline";
 import { useTargetNetwork } from "~~/hooks/scaffold-eth";
 
 const Home: NextPage = () => {
@@ -41,7 +41,7 @@ const Home: NextPage = () => {
         </div>
 
         <div className="grow bg-base-300 w-full mt-16 px-8 py-12">
-          <div className="max-w-6xl mx-auto grid gap-6 md:grid-cols-2 xl:grid-cols-4">
+          <div className="max-w-7xl mx-auto grid gap-6 md:grid-cols-2 xl:grid-cols-5">
             <Link
               href="/users"
               className="flex flex-col bg-base-100 px-8 py-8 rounded-3xl shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all"
@@ -61,6 +61,17 @@ const Home: NextPage = () => {
               <h2 className="text-xl font-bold mb-2">Keys</h2>
               <p className="text-sm text-left text-base-content/80">
                 Inspect key lifecycle history, see which keys are active or revoked, and register or revoke keys.
+              </p>
+            </Link>
+
+            <Link
+              href="/images"
+              className="flex flex-col bg-base-100 px-8 py-8 rounded-3xl shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all"
+            >
+              <PhotoIcon className="h-8 w-8 fill-secondary mb-4" />
+              <h2 className="text-xl font-bold mb-2">Images</h2>
+              <p className="text-sm text-left text-base-content/80">
+                Search registered image attestations by signature or by `(pHash, salt)` and inspect ledger-backed metadata.
               </p>
             </Link>
 
