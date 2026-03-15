@@ -79,7 +79,7 @@ It performs the following steps:
 ### Added
 
 - `scripts/stardust_image_demo.sh`
-- `unified-api/stardust_payload_demo.c`
+- `unified-api/stego_payload_tool.c`
 
 ### Modified
 
@@ -152,12 +152,12 @@ WM ID Hex: <payload-hex>
 
 ## Unified Payload Helper
 
-The helper binary built from `unified-api/stardust_payload_demo.c` has two modes:
+The helper binary built from `unified-api/stego_payload_tool.c` has two modes:
 
 ### Generate
 
 ```bash
-unified-api/stardust_payload_demo generate <phash_hex> <payload.bin> <pk.bin> <phash.bin>
+unified-api/stego_payload_tool generate <phash_hex> <payload.bin> <pk.bin> <phash.bin>
 ```
 
 This:
@@ -175,7 +175,7 @@ This:
 ### Verify
 
 ```bash
-unified-api/stardust_payload_demo verify <payload.bin> <pk.bin> <phash.bin>
+unified-api/stego_payload_tool verify <payload.bin> <pk.bin> <phash.bin>
 ```
 
 This verifies the extracted payload using the real unified BLS verification path.

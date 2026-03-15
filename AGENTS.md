@@ -59,7 +59,7 @@ make clean
 ```bash
 make stego_demo SCHEME=uov-80       # also: uov-100, bls-bn158, bls12-381
 make test SCHEME=bls-bn158          # single-scheme test (build + run)
-make stardust_payload_demo SCHEME=bls-bn158   # payload tool for Stardust demo
+make stego_payload_tool SCHEME=bls-bn158      # payload tool used by Stardust demo
 make clean
 ```
 

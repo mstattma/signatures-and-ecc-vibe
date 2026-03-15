@@ -98,19 +98,19 @@ endif
 # ====================================================================
 # Common targets
 # ====================================================================
-.PHONY: test clean all stardust_payload_demo
+.PHONY: test clean all stego_payload_tool
 
 all: stego_demo
 
-stardust_payload_demo: $(if $(filter $(BACKEND),uov),stego_demo.c $(BACKEND_SRC) stego_sig.h $(UOV_CSRCS),$(BLS_BUILD)/lib/librelic_s.a stego_sig.h $(BACKEND_SRC)) stardust_payload_demo.c
+stego_payload_tool: $(if $(filter $(BACKEND),uov),stego_demo.c $(BACKEND_SRC) stego_sig.h $(UOV_CSRCS),$(BLS_BUILD)/lib/librelic_s.a stego_sig.h $(BACKEND_SRC)) stego_payload_tool.c
 ifeq ($(BACKEND),uov)
-	$(CC) $(CFLAGS) $(DEFINES) $(INCLUDES) -o $@ stardust_payload_demo.c $(BACKEND_SRC) $(UOV_CSRCS) $(LIBS)
+	$(CC) $(CFLAGS) $(DEFINES) $(INCLUDES) -o $@ stego_payload_tool.c $(BACKEND_SRC) $(UOV_CSRCS) $(LIBS)
 else
-	$(CC) $(CFLAGS) $(INCLUDES) -o $@ stardust_payload_demo.c $(BACKEND_SRC) $(LIBS)
+	$(CC) $(CFLAGS) $(INCLUDES) -o $@ stego_payload_tool.c $(BACKEND_SRC) $(LIBS)
 endif
 
 test: stego_demo
 	./stego_demo
 
 clean:
-	rm -f stego_demo stardust_payload_demo
+	rm -f stego_demo stego_payload_tool

@@ -19,7 +19,7 @@ echo "workdir: $WORK"
 mkdir -p "$WORK" "$WORK/aligned"
 
 echo "== Building unified-api BLS-BN158 payload tool =="
-make -C "$ROOT/unified-api" stardust_payload_demo SCHEME=bls-bn158 >/dev/null
+make -C "$ROOT/unified-api" stego_payload_tool SCHEME=bls-bn158 >/dev/null
 
 echo "== Patching Stardust for local integration =="
 python3 "$ROOT/scripts/patch_stardust.py"
@@ -37,7 +37,7 @@ cmake -S "$ROOT/stardust" -B "$ROOT/stardust/build" \
 CPLUS_INCLUDE_PATH=/usr/include/opencv4 cmake --build "$ROOT/stardust/build" -j4 --target sffw-embed align extract >/dev/null
 
 echo "== Generating BLS-BN158 payload (salt || sig only) =="
-"$ROOT/unified-api/stardust_payload_demo" generate "$PHASH_HEX" \
+"$ROOT/unified-api/stego_payload_tool" generate "$PHASH_HEX" \
   "$WORK/payload.bin" "$WORK/pk.bin" "$WORK/phash.bin" | tee "$WORK/generate.txt"
 
 PAYLOAD_HEX="$(grep '^payload_hex=' "$WORK/generate.txt" | cut -d= -f2)"
@@ -100,7 +100,7 @@ EXTRACTED_HEX="$(grep '^WM ID Hex:' "$WORK/extract.txt" | awk -F': ' '{print tol
 echo "$EXTRACTED_HEX" | xxd -r -p > "$WORK/extracted_payload.bin"
 
 echo "== Verifying extracted payload with unified BLS flow =="
-"$ROOT/unified-api/stardust_payload_demo" verify \
+"$ROOT/unified-api/stego_payload_tool" verify \
   "$WORK/extracted_payload.bin" "$WORK/pk.bin" "$WORK/phash.bin" | tee "$WORK/verify.txt"
 
 echo
