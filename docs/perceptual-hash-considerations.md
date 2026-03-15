@@ -377,6 +377,37 @@ This "defense in depth" significantly raises the attack cost.
 
 An additional layer: embed a second, independent hash in the stego channel using a different transport mechanism or location. The verifier checks both independently. An attacker who modifies the image to collide with the primary hash likely breaks the secondary one (different algorithm, different embedding location).
 
+### Signed edit-tolerance policy
+
+Rather than using a single global similarity threshold, the signer could include a **policy profile** alongside the hash that declares expected tolerances:
+
+```json
+{
+  "crop_tolerance": "moderate",
+  "recompression_tolerance": "high",
+  "color_tolerance": "low",
+  "overlay_tolerance": "none"
+}
+```
+
+The verifier would then apply per-transform thresholds when interpreting the similarity score. This lets the same hash infrastructure support different use cases (e.g., photojournalism with very tight tolerances vs social media sharing with loose tolerances).
+
+The policy could be signed alongside the pHash (part of the signed digest) or stored in the ledger metadata. It does not need to fit in the stego channel.
+
+### Provenance-side auxiliary features
+
+Store extra non-hash signals in the ledger record (not in the stego payload) to strengthen verification without increasing embedded payload size:
+
+| Auxiliary feature | Size | Purpose |
+|---|---|---|
+| Edge histogram | ~32-64 B | Structural fingerprint; detects inpainting and object removal |
+| OCR text summary hash | 8-32 B | Detects text replacement in screenshots/documents/memes |
+| Dominant palette hash | 8-16 B | Detects color grading and palette swaps |
+| Object/label summary | variable | Detects semantic content changes (object add/remove) |
+| Face embedding summary | ~32-64 B | Detects face swaps via embedding distance |
+
+These features are computed at signing time and stored in IPFS metadata. The verifier recomputes them from the received image and compares. They complement the primary perceptual hash with additional orthogonal signals.
+
 ## Collision Resistance Budget
 
 Given our signature scheme constraints (using 1-byte salt), here's the collision resistance budget:
@@ -402,13 +433,17 @@ Given our signature scheme constraints (using 1-byte salt), here's the collision
 
 ## Future Work: Empirical Testing
 
-The tolerance penalties and effective collision resistance estimates above are theoretical. Before selecting a final hash configuration, we need empirical measurements:
+The tolerance penalties and effective collision resistance estimates above are theoretical. Before selecting a final hash configuration, we need empirical measurements. The full benchmark plan is documented in **[docs/phash-benchmark-plan.md](phash-benchmark-plan.md)** and covers:
 
-1. **Tolerance measurement**: For each hash algorithm, measure the distribution of Hamming distances between same-image pairs under common transformations (JPEG, resize, Stardust embedding, etc.).
-2. **Collision search**: For each hash at its effective bit size, attempt to find collisions using gradient-based attacks (for neural hashes) or brute-force search (for classical hashes).
-3. **Cross-correlation**: Measure the statistical independence between different hash algorithms on the same dataset. Are pHash and DinoHash bits actually independent?
-4. **Attack simulation**: Given a multi-hash configuration, attempt to produce an image that collides on all components simultaneously.
-5. **ROI determinism**: Measure how consistently CV/AI models detect the same ROIs across sender/receiver under common transformations.
+1. **Robustness profiling**: Distance distributions per hash under 24 benign transforms (JPEG, resize, crop, color pipeline, Stardust embed/extract)
+2. **Sensitivity testing**: Response to 10 suspicious and 13 malicious transforms (overlays, inpainting, face swap, AI edits, adversarial perturbation)
+3. **Bit-change structure analysis**: Per-bit flip frequency, deterministic bit subsets per transform, transform type inference from bit patterns
+4. **Multi-hash independence**: Pairwise correlation between hash families, effective independent bits
+5. **Composite evaluation**: Classifier accuracy for benign/suspicious/malicious using combined hash distance vectors
+6. **Regional analysis**: Grid-based and ROI-based spatial hashing, per-cell sensitivity mapping
+7. **Adversarial resistance**: Optimization cost to attack single vs multi-hash configurations
+
+The benchmark harness (`phash-benchmark/`) is designed as a reproducible, incremental, parallelizable Python pipeline producing Parquet output for analysis.
 
 ## Size constraints by scheme
 

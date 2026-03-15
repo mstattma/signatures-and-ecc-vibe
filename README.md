@@ -84,7 +84,8 @@ Planned / partially implemented next:
 
 | Directory / Document | Component | Status | Notes |
 |---|---|---|---|
-| [docs/perceptual-hash-considerations.md](docs/perceptual-hash-considerations.md) | pHash / dHash / aHash / BlockHash / DinoHash comparison | Documented | Scheme-independent comparison and trade-offs |
+| [docs/perceptual-hash-considerations.md](docs/perceptual-hash-considerations.md) | pHash / dHash / aHash / BlockHash / DinoHash comparison | Documented | Scheme-independent comparison, multi-hash strategies, and collision analysis |
+| [docs/phash-benchmark-plan.md](docs/phash-benchmark-plan.md) | Empirical benchmark plan for hash evaluation | Planned | Transform taxonomy, output schema, harness architecture |
 | [docs/video-extension.md](docs/video-extension.md) | Merkle tree of interval pHashes | Designed | Video commitment model, not yet implemented |
 
 ## Implemented Stego Transport Components
