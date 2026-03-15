@@ -219,6 +219,7 @@ async function main() {
   const pHash = ethers.hexlify(ethers.randomBytes(18));
   // Pad to bytes24 for the schema
   const pHash24 = pHash + "0".repeat(12); // pad to 24 bytes
+  const pHashVersion = 1;
 
   // Generate salt (2 bytes)
   const salt = ethers.hexlify(ethers.randomBytes(2));
@@ -231,6 +232,7 @@ async function main() {
   const sigPrefix = ethers.dataSlice(signature, 0, 16);
 
   console.log("  pHash (144 bits):", pHash);
+  console.log("  pHash version:", pHashVersion);
   console.log("  Salt (16 bits):", salt);
   console.log("  Signature (168 bits):", ethers.hexlify(signature));
   console.log("  Sig prefix (128 bits):", sigPrefix);
@@ -251,7 +253,7 @@ async function main() {
   // Step 4: Check Bloom filter for cross-chain duplicate
   // ============================================================
   console.log("--- Step 4: Cross-Chain Duplicate Check (Bloom Filter) ---");
-  const pHashSaltKey = ethers.keccak256(ethers.concat([pHash24, salt]));
+  const pHashSaltKey = ethers.solidityPackedKeccak256(["uint16", "bytes24", "bytes2"], [pHashVersion, pHash24, salt]);
   const mightExist = await bloomFilter.mightContain(pHashSaltKey);
   console.log("  pHashSaltKey:", pHashSaltKey);
   console.log("  Bloom filter says might exist:", mightExist);
@@ -279,8 +281,8 @@ async function main() {
     eas = new ethers.Contract(easAddress, easAbi, signer);
 
     const attestationData = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["bytes16", "bytes", "uint8", "bytes", "bytes24", "bytes2", "bytes32", "bytes32"],
-      [sigPrefix, signature, SCHEME_BLS_BN158, pk, pHash24, salt, fileHash, metadataCID]
+      ["bytes16", "bytes", "uint8", "bytes", "bytes24", "uint16", "bytes2", "bytes32", "bytes32"],
+      [sigPrefix, signature, SCHEME_BLS_BN158, pk, pHash24, pHashVersion, salt, fileHash, metadataCID]
     );
 
     console.log("  Creating EAS attestation...");
@@ -341,19 +343,21 @@ async function main() {
 
       // Decode the attestation data
       const decoded = ethers.AbiCoder.defaultAbiCoder().decode(
-        ["bytes16", "bytes", "uint8", "bytes", "bytes24", "bytes2", "bytes32", "bytes32"],
+        ["bytes16", "bytes", "uint8", "bytes", "bytes24", "uint16", "bytes2", "bytes32", "bytes32"],
         att.data
       );
 
       const ledgerPK = decoded[3];
       const ledgerPHash = ethers.dataSlice(decoded[4], 0, 18); // First 18 bytes (144 bits)
-      const ledgerSalt = decoded[5];
-      const ledgerFileHash = decoded[6];
+      const ledgerPHashVersion = decoded[5];
+      const ledgerSalt = decoded[6];
+      const ledgerFileHash = decoded[7];
 
       console.log("");
       console.log("  === FROM LEDGER ===");
       console.log("  Public key:", ethers.hexlify(ledgerPK));
       console.log("  pHash:", ledgerPHash);
+      console.log("  pHash version:", ledgerPHashVersion.toString());
       console.log("  Salt:", ethers.hexlify(ledgerSalt));
       console.log("  File hash:", ledgerFileHash);
       console.log("  Attester:", att.attester);
@@ -381,7 +385,7 @@ async function main() {
     console.log("  → Registration would be rejected (duplicate detected)");
     console.log("  → Client retries with new salt...");
     const newSalt = ethers.hexlify(ethers.randomBytes(2));
-    const newPHashSaltKey = ethers.keccak256(ethers.concat([pHash24, newSalt]));
+    const newPHashSaltKey = ethers.solidityPackedKeccak256(["uint16", "bytes24", "bytes2"], [pHashVersion, pHash24, newSalt]);
     const newMightExist = await bloomFilter.mightContain(newPHashSaltKey);
     console.log("  New salt:", newSalt, "→ Bloom says:", newMightExist ? "might exist (retry again)" : "unique!");
   }

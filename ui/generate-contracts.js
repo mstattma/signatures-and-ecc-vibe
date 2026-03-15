@@ -16,6 +16,8 @@ const CONTRACTS = {
   KeyRegistry: "keyRegistry",
   CrossChainBloomFilter: "bloomFilter",
   ImageAuthResolver: "resolver",
+  EAS: "eas",
+  SchemaRegistry: "schemaRegistry",
 };
 
 function main() {
@@ -36,7 +38,17 @@ function main() {
       continue;
     }
 
-    const artifactPath = path.join(artifactsDir, "contracts", `${name}.sol`, `${name}.json`);
+    let artifactPath = path.join(artifactsDir, "contracts", `${name}.sol`, `${name}.json`);
+    if (!fs.existsSync(artifactPath) && (name === "EAS" || name === "SchemaRegistry")) {
+      artifactPath = path.join(
+        artifactsDir,
+        "@ethereum-attestation-service",
+        "eas-contracts",
+        "contracts",
+        `${name}.sol`,
+        `${name}.json`,
+      );
+    }
     if (!fs.existsSync(artifactPath)) {
       console.log(`  ${name}: skipped (no artifact at ${artifactPath})`);
       continue;

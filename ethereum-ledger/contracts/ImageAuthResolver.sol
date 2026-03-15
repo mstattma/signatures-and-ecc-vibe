@@ -52,23 +52,24 @@ contract ImageAuthResolver is SchemaResolver {
         uint256 /* value */
     ) internal override returns (bool) {
         // Decode attestation data
-        // Schema: sigPrefix, signature, scheme, publicKey, pHash, salt, fileHash, metadataCID
+        // Schema: sigPrefix, signature, scheme, publicKey, pHash, pHashVersion, salt, fileHash, metadataCID
         (
             bytes16 sigPrefix,
             ,  // signature (not needed in resolver)
             ,  // scheme
             bytes memory publicKey,
             bytes24 pHash,
+            uint16 pHashVersion,
             bytes2 salt,
             ,  // fileHash
                // metadataCID
         ) = abi.decode(
             attestation.data,
-            (bytes16, bytes, uint8, bytes, bytes24, bytes2, bytes32, bytes32)
+            (bytes16, bytes, uint8, bytes, bytes24, uint16, bytes2, bytes32, bytes32)
         );
 
         // 1. Enforce (pHash, salt) uniqueness on this chain
-        bytes32 pHashSaltKey = keccak256(abi.encodePacked(pHash, salt));
+        bytes32 pHashSaltKey = keccak256(abi.encodePacked(pHashVersion, pHash, salt));
         if (pHashSaltIndex[pHashSaltKey] != bytes32(0)) {
             return false; // Duplicate
         }
@@ -102,15 +103,15 @@ contract ImageAuthResolver is SchemaResolver {
     }
 
     /// @notice Check if a (pHash, salt) is already registered on this chain.
-    function isDuplicate(bytes24 pHash, bytes2 salt) external view returns (bool) {
-        bytes32 key = keccak256(abi.encodePacked(pHash, salt));
+    function isDuplicate(uint16 pHashVersion, bytes24 pHash, bytes2 salt) external view returns (bool) {
+        bytes32 key = keccak256(abi.encodePacked(pHashVersion, pHash, salt));
         return pHashSaltIndex[key] != bytes32(0);
     }
 
     /// @notice Check cross-chain Bloom filter for potential duplicate.
-    function mightBeDuplicateCrossChain(bytes24 pHash, bytes2 salt) external view returns (bool) {
+    function mightBeDuplicateCrossChain(uint16 pHashVersion, bytes24 pHash, bytes2 salt) external view returns (bool) {
         if (address(bloomFilter) == address(0)) return false;
-        bytes32 key = keccak256(abi.encodePacked(pHash, salt));
+        bytes32 key = keccak256(abi.encodePacked(pHashVersion, pHash, salt));
         return bloomFilter.mightContain(key);
     }
 }

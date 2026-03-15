@@ -23,6 +23,7 @@ const IMAGE_ATTESTATION_TYPES = [
   { type: "uint8", name: "scheme" },
   { type: "bytes", name: "publicKey" },
   { type: "bytes24", name: "pHash" },
+  { type: "uint16", name: "pHashVersion" },
   { type: "bytes2", name: "salt" },
   { type: "bytes32", name: "fileHash" },
   { type: "bytes32", name: "metadataCID" },
@@ -50,6 +51,7 @@ export function ImageSearch() {
   const [signature, setSignature] = useState("");
   const [sigSalt, setSigSalt] = useState("");
   const [phash, setPhash] = useState("");
+  const [phashVersion, setPhashVersion] = useState("1");
   const [phashSalt, setPhashSalt] = useState("");
   const [publicKeySearch, setPublicKeySearch] = useState("");
   const [loading, setLoading] = useState(false);
@@ -175,7 +177,7 @@ export function ImageSearch() {
       let pHash24 = phashHex;
       while (pHash24.length < 50) pHash24 += "0";
       const paddedSalt = saltHex.length === 4 ? `${saltHex}00` : saltHex;
-      const key = keccak256(encodePacked(["bytes24", "bytes2"], [pHash24 as `0x${string}`, paddedSalt as `0x${string}`]));
+      const key = keccak256(encodePacked(["uint16", "bytes24", "bytes2"], [Number(phashVersion), pHash24 as `0x${string}`, paddedSalt as `0x${string}`]));
 
       const uid = await publicClient.readContract({
         address: resolverAddress,
@@ -259,7 +261,7 @@ export function ImageSearch() {
                         </Link>
                       </td>
                       <td><code className="text-xs break-all">{record.decoded[0]}</code></td>
-                      <td><code className="text-xs break-all">{record.decoded[5]}</code></td>
+                      <td><code className="text-xs break-all">{record.decoded[6]}</code></td>
                       <td><code className="text-xs break-all">{record.decoded[1]}</code></td>
                       <td>{SCHEME_NAMES[Number(record.decoded[2])] || `Unknown (${record.decoded[2]})`}</td>
                       <td><code className="text-xs break-all">{record.event.args?.pHashSaltKey || "-"}</code></td>
@@ -287,9 +289,10 @@ export function ImageSearch() {
       <div className="card bg-base-200 shadow-xl">
         <div className="card-body">
           <h2 className="card-title">Search by pHash + Salt</h2>
-          <p className="text-sm text-base-content/70">Computes <code>keccak256(bytes24(pHash) || bytes2(salt))</code> and queries the resolver&apos;s authoritative per-chain dedup index.</p>
+          <p className="text-sm text-base-content/70">Computes <code>keccak256(uint16(pHashVersion) || bytes24(pHash) || bytes2(salt))</code> and queries the resolver&apos;s authoritative per-chain dedup index.</p>
           <div className="flex flex-col gap-2">
             <input className="input input-bordered font-mono text-sm" placeholder="pHash hex (0x...)" value={phash} onChange={e => setPhash(e.target.value)} />
+            <input className="input input-bordered font-mono text-sm" placeholder="pHash version (uint16, default 1)" value={phashVersion} onChange={e => setPhashVersion(e.target.value)} />
             <input className="input input-bordered font-mono text-sm" placeholder="Salt hex (0x..., usually 1-2 bytes)" value={phashSalt} onChange={e => setPhashSalt(e.target.value)} />
             <button className="btn btn-primary" disabled={!phash || !phashSalt || loading || !canSearch} onClick={lookupByPhash}>Search by pHash + Salt</button>
           </div>
@@ -327,13 +330,14 @@ export function ImageSearch() {
               <div><strong>Attester:</strong> <Link href={`/keys?address=${result.attestation.attester}`} className="link link-primary break-all">{result.attestation.attester}</Link></div>
               <div><strong>Timestamp:</strong> {new Date(Number(result.attestation.time) * 1000).toLocaleString()}</div>
               <div><strong>Scheme:</strong> {SCHEME_NAMES[Number(result.decoded[2])] || `Unknown (${result.decoded[2]})`}</div>
-              <div><strong>Salt:</strong> <code>{result.decoded[5]}</code></div>
+              <div><strong>pHash Version:</strong> <code>{result.decoded[5].toString()}</code></div>
+              <div><strong>Salt:</strong> <code>{result.decoded[6]}</code></div>
               <div className="md:col-span-2"><strong>Signature prefix:</strong> <code className="break-all">{result.decoded[0]}</code></div>
               <div className="md:col-span-2"><strong>Signature:</strong> <code className="break-all">{result.decoded[1]}</code></div>
               <div className="md:col-span-2"><strong>Public key:</strong> <code className="break-all">{result.decoded[3]}</code></div>
               <div className="md:col-span-2"><strong>pHash:</strong> <code className="break-all">{result.decoded[4]}</code></div>
-              <div className="md:col-span-2"><strong>fileHash:</strong> <code className="break-all">{result.decoded[6]}</code></div>
-              <div className="md:col-span-2"><strong>metadataCID:</strong> <code className="break-all">{result.decoded[7]}</code></div>
+              <div className="md:col-span-2"><strong>fileHash:</strong> <code className="break-all">{result.decoded[7]}</code></div>
+              <div className="md:col-span-2"><strong>metadataCID:</strong> <code className="break-all">{result.decoded[8]}</code></div>
             </div>
           </div>
         </div>
@@ -363,7 +367,7 @@ export function ImageSearch() {
                       .map((record, idx) => (
                         <tr key={idx}>
                           <td><Link href={`/images/${record.uid}`} className="link link-primary text-xs break-all">{record.uid}</Link></td>
-                          <td><code className="text-xs break-all">{record.decoded[5]}</code></td>
+                          <td><code className="text-xs break-all">{record.decoded[6]}</code></td>
                           <td>{SCHEME_NAMES[Number(record.decoded[2])] || `Unknown (${record.decoded[2]})`}</td>
                           <td><code className="text-xs break-all">{record.decoded[4]}</code></td>
                           <td><Link href={`/keys?address=${record.att.attester}`} className="link link-primary text-xs break-all">{record.att.attester}</Link></td>

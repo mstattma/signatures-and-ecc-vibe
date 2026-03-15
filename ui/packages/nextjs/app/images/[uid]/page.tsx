@@ -18,6 +18,7 @@ const IMAGE_ATTESTATION_TYPES = [
   { type: "uint8", name: "scheme" },
   { type: "bytes", name: "publicKey" },
   { type: "bytes24", name: "pHash" },
+  { type: "uint16", name: "pHashVersion" },
   { type: "bytes2", name: "salt" },
   { type: "bytes32", name: "fileHash" },
   { type: "bytes32", name: "metadataCID" },
@@ -73,12 +74,13 @@ export default function ImageDetailPage() {
           <div><strong>Timestamp:</strong> {new Date(Number(att.time) * 1000).toLocaleString()}</div>
           <div><strong>Scheme:</strong> {SCHEME_NAMES[Number(decoded[2])] || `Unknown (${decoded[2]})`}</div>
           <div><strong>Signature Prefix:</strong> <code className="break-all">{decoded[0]}</code></div>
-          <div><strong>Salt:</strong> <code>{decoded[5]}</code></div>
+          <div><strong>pHash Version:</strong> <code>{decoded[5].toString()}</code></div>
+          <div><strong>Salt:</strong> <code>{decoded[6]}</code></div>
           <div><strong>Signature:</strong> <code className="break-all">{decoded[1]}</code></div>
           <div><strong>Public Key:</strong> <code className="break-all">{decoded[3]}</code></div>
           <div><strong>pHash:</strong> <code className="break-all">{decoded[4]}</code></div>
-          <div><strong>fileHash:</strong> <code className="break-all">{decoded[6]}</code></div>
-          <div><strong>metadataCID:</strong> <code className="break-all">{decoded[7]}</code></div>
+          <div><strong>fileHash:</strong> <code className="break-all">{decoded[7]}</code></div>
+          <div><strong>metadataCID:</strong> <code className="break-all">{decoded[8]}</code></div>
         </div>
       </div>
     </div>

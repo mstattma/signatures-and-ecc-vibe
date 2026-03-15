@@ -19,7 +19,7 @@ const EAS_ADDRESS = "0x4200000000000000000000000000000000000021";
 const SCHEMA_REGISTRY_ADDRESS = "0x4200000000000000000000000000000000000020";
 
 const SCHEMA_STRING =
-  "bytes16 sigPrefix, bytes signature, uint8 scheme, bytes publicKey, bytes24 pHash, bytes2 salt, bytes32 fileHash, bytes32 metadataCID";
+  "bytes16 sigPrefix, bytes signature, uint8 scheme, bytes publicKey, bytes24 pHash, uint16 pHashVersion, bytes2 salt, bytes32 fileHash, bytes32 metadataCID";
 
 async function main() {
   const [deployer] = await ethers.getSigners();
