@@ -80,13 +80,18 @@ Planned / partially implemented next:
 | [BLS/](BLS/) | BLS (BN-P158) | 168 | 328 | 160 | 280-368 bits (pHash + salt + sig, no PK) | ~78 bits | 0 (broken by Shor) | Working prototype |
 | [BLS/](BLS/) | BLS (BLS12-381) | 392 | 776 | 256 | 504-592 bits (pHash + salt + sig, no PK) | ~117-120 bits | 0 (broken by Shor) | Working prototype |
 
-## Implemented Perceptual Hash / Stego Transport Components
+## Perceptual Hash Components
 
-| Directory / Script | Component | Type | Status | Notes |
-|---|---|---|---|---|
-| [docs/perceptual-hash-considerations.md](docs/perceptual-hash-considerations.md) | pHash / dHash / aHash / BlockHash / DinoHash comparison | Perceptual hash analysis | Documented | Scheme-independent comparison and trade-offs |
-| [scripts/stardust_image_demo.sh](scripts/stardust_image_demo.sh) | castLabs Stardust watermark embed/extract | Stego transport | Working prototype | Real image payload round-trip using BLS-BN158 payloads |
-| [docs/video-extension.md](docs/video-extension.md) | Merkle tree of interval pHashes | Video commitment model | Designed | Not yet implemented |
+| Directory / Document | Component | Status | Notes |
+|---|---|---|---|
+| [docs/perceptual-hash-considerations.md](docs/perceptual-hash-considerations.md) | pHash / dHash / aHash / BlockHash / DinoHash comparison | Documented | Scheme-independent comparison and trade-offs |
+| [docs/video-extension.md](docs/video-extension.md) | Merkle tree of interval pHashes | Designed | Video commitment model, not yet implemented |
+
+## Implemented Stego Transport Components
+
+| Directory / Script | Component | Status | Notes |
+|---|---|---|---|
+| [scripts/stardust_image_demo.sh](scripts/stardust_image_demo.sh) | castLabs Stardust watermark embed/extract | Working prototype | Real image payload round-trip using BLS-BN158 payloads |
 
 ## Unified API
 
