@@ -459,7 +459,11 @@ Given our signature scheme constraints (using 1-byte salt), here's the collision
 
 ## Future Work: Empirical Testing
 
-The tolerance penalties and effective collision resistance estimates above are theoretical. Before selecting a final hash configuration, we need empirical measurements. The full benchmark plan is documented in **[docs/phash-benchmark-plan.md](phash-benchmark-plan.md)** and covers:
+The tolerance penalties and effective collision resistance estimates above are theoretical. Before selecting a final hash configuration, we need empirical measurements. The full benchmark plan now lives in the sibling repository:
+
+- [`/mnt/c/Users/micha/OneDrive/Dokumente/GitHub/perceptual-fuzzy-hash-test-vibe/docs/phash-benchmark-plan.md`](/mnt/c/Users/micha/OneDrive/Dokumente/GitHub/perceptual-fuzzy-hash-test-vibe/docs/phash-benchmark-plan.md)
+
+It covers:
 
 1. **Robustness profiling**: Distance distributions per hash under 24 benign transforms (JPEG, resize, crop, color pipeline, Stardust embed/extract)
 2. **Sensitivity testing**: Response to 10 suspicious and 13 malicious transforms (overlays, inpainting, face swap, AI edits, adversarial perturbation)
