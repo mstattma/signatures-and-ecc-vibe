@@ -1,228 +1,171 @@
 # AGENTS.md
 
-This file is for coding agents working anywhere in this repository.
+Guidance for coding agents operating in this repository.
 
 ## Scope
 
-This repo contains several semi-independent projects:
+| Directory | What it is | Language |
+|---|---|---|
+| `UOV/` | Post-quantum UOV signatures with salt-in-digest message recovery | C99 |
+| `BLS/` | BLS BN-P158 and BLS12-381 signatures using RELIC | C99 |
+| `unified-api/` | Scheme-agnostic signature API (`stego_sig.h`) over UOV and BLS | C99 |
+| `stardust/` | Git submodule — castLabs forensic watermarking (stego transport) | C/C++ |
+| `scripts/` | Repo-level orchestration (Stardust demo, patch helper) | Bash, Python |
+| `ethereum-ledger/` | Solidity contracts, Hardhat scripts, Dockerized local chain | Solidity, JS |
+| `ui/` | Scaffold-ETH 2 UI with custom pages (has its own `ui/AGENTS.md`) | TypeScript, React |
+| `docs/` | Design documents and proposals | Markdown |
 
-- `UOV/` - post-quantum UOV implementation with salt-in-digest message recovery
-- `BLS/` - BLS BN-P158 and BLS12-381 implementation using RELIC
-- `unified-api/` - scheme-agnostic C API over UOV and BLS
-- `ethereum-ledger/` - Solidity contracts, Hardhat scripts, Dockerized local chain
-- `ui/` - Scaffold-ETH 2 based UI for exploring and operating the ledger
-- `docs/` - design documents and proposals
+When changing one area, check whether docs, Docker flow, generated ABI files, and `AGENTS.md` also need updates.
 
-When changing one area, check whether docs, Docker flow, and generated ABI/address files also need updates.
+## Rules
 
-## Repo-Level Rules
+- No `.cursor/rules/`, `.cursorrules`, or `.github/copilot-instructions.md` exist. This file is the only agent guidance.
+- Prefer minimal, targeted changes. Do not reformat unrelated code.
+- Preserve standalone nature of subprojects (`ethereum-ledger/` is intentionally separate from `ui/packages/hardhat`).
+- Do not silently change security-sensitive defaults (salt size, pHash limits, signature layout, gas assumptions).
+- The `stardust/` submodule must stay clean. Apply patches at build/demo time via `scripts/patch_stardust.py`.
 
-- There is **no root `.cursor/rules/`, `.cursorrules`, or `.github/copilot-instructions.md`**.
-- The `ui/` subtree has its own `ui/AGENTS.md`; treat it as additional local guidance for that subtree.
-- Prefer minimal, targeted changes over broad refactors.
-- Preserve the standalone nature of subprojects. In particular, `ethereum-ledger/` is intentionally separate from `ui/packages/hardhat`.
-- Do not silently change security-sensitive defaults (salt size, pHash length limits, signature layout, gas assumptions) without updating docs.
+## Build / Test Quick Reference
 
-## Primary Workflows
-
-## Full local stack (recommended)
-
-From repo root:
+### Full local stack (Docker, recommended)
 
 ```bash
-docker compose up -d
+docker compose up -d          # Hardhat node :8545 + SE2 UI :3000
 docker compose logs -f
 ```
 
-Services:
-
-- Hardhat node: `http://localhost:8545`
-- UI: `http://localhost:3000`
-- Contract explorer/debug: `http://localhost:3000/debug`
-
-The node container auto-deploys contracts and writes `ethereum-ledger/deployment.json`.
-The UI container auto-generates `externalContracts.ts` from deployment data.
-
-## Quick command reference
-
-### `UOV/`
-
-Main build/test entrypoints live in `UOV/pqov`.
+### `UOV/pqov/`
 
 ```bash
-cd UOV/pqov
-make PARAM=80          # build 80-bit variant
-make PARAM=100         # build 100-bit variant
-make test PARAM=80     # run tests for one parameter set
-make test PARAM=100
+make PARAM=80                 # build 80-bit variant
+make PARAM=100                # build 100-bit variant
+make test PARAM=80            # single-param test
 make clean
 ```
-
-If a single named test target exists in the local Makefile, prefer it. Otherwise use the nearest narrow target.
 
 ### `BLS/`
 
 ```bash
-cd BLS
-make stego_demo CURVE=BN-158
-make stego_demo CURVE=BLS12-381
+make stego_demo CURVE=BN-158  # or BLS12-381
 make test CURVE=BN-158
-make test CURVE=BLS12-381
-make build-relic
+make build-relic              # build RELIC for both curves
 make clean
 ```
 
 ### `unified-api/`
 
 ```bash
-cd unified-api
-make stego_demo SCHEME=uov-80
-make stego_demo SCHEME=uov-100
-make stego_demo SCHEME=bls-bn158
-make stego_demo SCHEME=bls12-381
-make test SCHEME=uov-80
-make test SCHEME=bls-bn158
+make stego_demo SCHEME=uov-80       # also: uov-100, bls-bn158, bls12-381
+make test SCHEME=bls-bn158          # single-scheme test (build + run)
+make stardust_payload_demo SCHEME=bls-bn158   # payload tool for Stardust demo
 make clean
 ```
-
-There is no granular unit-test suite here; `make test SCHEME=...` is the closest single-scheme test.
 
 ### `ethereum-ledger/`
 
 ```bash
-cd ethereum-ledger
 npx hardhat compile
 npx hardhat run scripts/deploy.js --network localhost
 npx hardhat run scripts/demo.js --network localhost
-npx hardhat run scripts/deploy.js --network baseSepolia
-npx hardhat run scripts/demo.js --network baseSepolia
-node scripts/export-abis.js
-```
-
-Useful variants:
-
-```bash
 SIMULATE_NETWORK=arbitrumNova npx hardhat run scripts/demo.js --network localhost
-ETH_PRICE_USD=2500 npx hardhat run scripts/demo.js --network localhost
+node scripts/export-abis.js      # regenerate UI contract ABIs
 ```
 
 ### `ui/`
 
-Docker-first workflow is preferred. If running manually:
+Docker-first (started by `docker compose up`). Manual fallback:
 
 ```bash
-cd ui
-yarn install
-yarn workspace @se-2/nextjs dev
+cd ui && yarn install && yarn workspace @se-2/nextjs dev
 ```
 
-If contracts changed:
+After contract changes: `cd ethereum-ledger && npx hardhat compile && node scripts/export-abis.js`
+
+### `scripts/` (repo-level)
 
 ```bash
-cd ethereum-ledger
-npx hardhat compile
-node scripts/export-abis.js
+./scripts/stardust_image_demo.sh   # full BLS-BN158 → Stardust → extract → verify
+python3 scripts/patch_stardust.py  # apply local patches to stardust/ submodule
 ```
 
-## Build/Lint/Test Expectations
+## Code Style
 
-- For C/C code, rebuild only the affected scheme/project if possible.
-- For Solidity changes, always run `npx hardhat compile` in `ethereum-ledger/`.
-- For UI changes, prefer at least a local page load or container restart if full lint/build is too expensive.
-- After contract ABI/address changes, regenerate `ui/packages/nextjs/contracts/externalContracts.ts`.
-- If you touch `docker-compose.yml`, verify both `node` and `ui` services still start.
+### General
 
-## Code Style - General
+- ASCII unless the file already uses Unicode. No emoji unless asked.
+- Explicit, boring code over clever abstractions.
+- High-signal comments: document *why*, not *what*.
+- Update docs when behavior, payload formats, or workflow change.
 
-- Keep code ASCII unless the file already uses Unicode or there is a strong reason.
-- Favor explicit, boring code over clever abstractions.
-- Keep comments high-signal. Document why, not the obvious what.
-- Update docs when behavior, payload formats, or operational workflow changes.
-- Avoid introducing new global tools/frameworks unless clearly justified.
+### C / C99 (`UOV/`, `BLS/`, `unified-api/`)
 
-## C / C99 Style (`UOV/`, `BLS/`, `unified-api/`)
+- `snake_case` functions/variables, `SCREAMING_SNAKE_CASE` macros/constants.
+- Standard headers first, then project headers.
+- Prefer `uint8_t`, `uint64_t`, etc.
+- Check return codes; do not assume success.
+- Keep stack allocations conservative.
+- In `unified-api/`, keep scheme-specific code in backend files, not shared headers.
+- Respect pHash limits: UOV-80 max 18 B / 144 bits, UOV-100 max 23 B / 184 bits.
+- Never silently truncate oversized pHashes (`ov_sign_digest` returns `-2`).
+- Note: `unified-api/Makefile` uses `-O1` due to a RELIC BLS12-381 crash at `-O2`.
 
-- Match the existing file style; do not reformat unrelated blocks.
-- Includes: standard/system headers first, then project headers.
-- Use `snake_case` for functions and variables.
-- Use `SCREAMING_SNAKE_CASE` for macros and compile-time constants.
-- Prefer fixed-width integer types (`uint8_t`, `uint64_t`, etc.).
-- Check return codes explicitly; do not assume success.
-- Keep stack allocations conservative. Large buffers should be justified.
-- In `unified-api/`, preserve the abstraction boundary: scheme-specific behavior belongs in backend files, not the shared header/demo unless unavoidable.
-- Respect pHash size constraints:
-  - UOV-80 max: 18 bytes / 144 bits
-  - UOV-100 max: 23 bytes / 184 bits
-- Do not reintroduce silent truncation of oversized pHashes.
+### Solidity (`ethereum-ledger/contracts/`)
 
-## Solidity Style (`ethereum-ledger/contracts/`)
+- Version `0.8.27`, EVM target `cancun`, optimizer on.
+- Small focused contracts with explicit events.
+- Preserve separation: `KeyRegistry` = key lifecycle, `CrossChainBloomFilter` = dedup, `ImageAuthResolver` = EAS resolver.
+- Consider gas cost before adding on-chain state; prefer IPFS for bulk data.
+- If interfaces change, update deploy/demo scripts and `docs/ethereum-ledger-proposal.md`.
 
-- Solidity version is `0.8.27`; keep optimizer-compatible code.
-- Favor small, focused contracts with explicit events.
-- Use clear revert strings for user-facing checks.
-- Keep trust/security assumptions visible in comments.
-- Preserve separation of concerns:
-  - `KeyRegistry` = key lifecycle
-  - `CrossChainBloomFilter` = duplicate detection primitive
-  - `ImageAuthResolver` = EAS resolver / policy enforcement
-- If adding new state, consider gas cost and whether it belongs on-chain or in IPFS/off-chain metadata.
-- If contract interfaces change, update deploy/demo scripts and the proposal docs.
+### JavaScript (`ethereum-ledger/scripts/`)
 
-## JavaScript / Node Style (`ethereum-ledger/scripts/`)
+- CommonJS (`require`). Keep scripts as one-off operational tools.
+- Print actionable summaries (addresses, gas with USD, network).
+- Gas cost display uses `formatGas()` with per-network pricing and `ETH_PRICE_USD` env override.
 
-- Use CommonJS in `ethereum-ledger/` scripts unless the project is migrated consistently.
-- Keep scripts runnable as one-off operational tools.
-- Print actionable summaries (addresses, schema UID, gas, network).
-- Be explicit about local vs testnet behavior.
-- If a script writes generated files (`deployment.json`, ABI exports), document that side effect.
+### TypeScript / React (`ui/`)
 
-## Next.js / TypeScript Style (`ui/`)
+- Follow SE2 conventions and `ui/AGENTS.md`.
+- App Router patterns in `packages/nextjs/app/`.
+- Use SE2 hooks: `useScaffoldReadContract`, `useScaffoldWriteContract`, `useScaffoldEventHistory`.
+- Our contracts are in `externalContracts.ts`, not `deployedContracts.ts`.
+- `decodeTxData.ts` is patched to decode both deployed and external contracts and to label contract creation transactions.
 
-- Follow existing SE2 conventions and also respect `ui/AGENTS.md`.
-- Use App Router patterns already present in `packages/nextjs/app/`.
-- Prefer `type` over `interface` for local custom types unless extending is needed.
-- Use named, focused client components for stateful UI.
-- Prefer SE2 hooks for contract interaction:
-  - `useScaffoldReadContract`
-  - `useScaffoldWriteContract`
-  - `useScaffoldEventHistory`
-- Use `externalContracts.ts` for our contracts; do not move them into SE2's built-in deploy system unless intentionally refactoring architecture.
-- If changing block explorer decoding, keep support for both `deployedContracts.ts` and `externalContracts.ts`.
-- Use DaisyUI/Tailwind components already present in SE2.
+### Shell / Python (`scripts/`)
 
-## UI-specific project extensions that must be preserved
+- Bash scripts: `set -euo pipefail`.
+- `patch_stardust.py` applies idempotent text replacements; check before re-applying.
 
-- Custom pages:
-  - `/users`
-  - `/keys`
-  - `/bloom`
-- `Users` is event-driven (derived from `KeyActivated` event history).
-- `Keys` is state-driven (`keyCount`, `activeKeyIndex`, `getKey`).
-- URL linking from Users to Keys: `/keys?address=0x...`
-- Homepage and debug page use project-specific copy, not default SE2 boilerplate.
-- `decodeTxData.ts` has local patches:
-  - decode external contracts
-  - label contract creation transactions explicitly
+## UI Extensions That Must Be Preserved
 
-## Testing Notes / Gotchas
+- Custom pages: `/users` (event-driven), `/keys` (state-driven, accepts `?address=`), `/bloom`
+- Homepage and debug page have project-specific copy, not SE2 defaults.
+- `decodeTxData.ts` patches: external contract decoding + contract creation labeling.
 
-- `ui/` on OneDrive-mounted paths may be very slow for package installs and first builds.
-- Docker avoids most filesystem performance issues; prefer it for repeatable local work.
-- Next.js cache is persisted via Docker volume `nextjs-cache`; changes usually trigger only partial recompilation.
-- If the UI behaves stale after major changes, clear the cache volume.
+## Stardust Integration
 
-## When you modify these, also update docs
+- `stardust/` is a git submodule (castlabs/stardust). Keep it clean in commits.
+- `scripts/patch_stardust.py` patches SSH→HTTPS submodules, system OpenCV support, and >64-bit WM-ID overflow.
+- `scripts/stardust_image_demo.sh` orchestrates: build → generate BLS payload → embed → align → extract → verify.
+- Stardust WM-ID path supports up to 256 bits; our BLS-BN158 payload is 184 bits.
+- UOV (400/504 bits) and BLS12-381 (408 bits) do NOT fit the current Stardust WM-ID path.
 
-- signature sizes / payload layout
-- pHash embedding behavior
-- gas assumptions or simulated network costs
-- Docker workflow
-- ledger architecture, trust model, or duplicate detection
-- SE2 UI customizations
+## Gotchas
 
-Relevant docs:
+- `ui/` on OneDrive/WSL2 paths is very slow for `yarn install`. Docker avoids this.
+- Next.js cache in Docker volume `nextjs-cache`; clear with `docker volume rm ...nextjs-cache` if stale.
+- Hardhat node container state is in-memory; `docker compose down` + `up` resets everything.
+- `deployment.json` bridges deploy and demo scripts; demo detects stale addresses and falls back.
+- BLS12-381 unified-api binary crashes at `-O2`; use `-O1` (documented in Makefile).
 
-- `docs/scheme-comparison.md`
-- `docs/ethereum-ledger-proposal.md`
-- `docs/video-extension.md`
-- `docs/ui-se2-customizations.md`
+## When You Change These, Update Docs Too
+
+| What changed | Update |
+|---|---|
+| Signature sizes / payload layout | `docs/scheme-comparison.md`, `unified-api/README.md`, top-level `README.md` |
+| pHash embedding / max lengths | `docs/perceptual-hash-considerations.md`, `unified-api/README.md` |
+| Gas costs / network assumptions | `docs/ethereum-ledger-proposal.md`, `ethereum-ledger/README.md` |
+| Contracts / ABI | deploy scripts, `export-abis.js`, `docs/ethereum-ledger-proposal.md` |
+| Docker workflow | `docker-compose.yml` comments, `ethereum-ledger/README.md` |
+| UI pages or SE2 patches | `docs/ui-se2-customizations.md` |
+| Stardust integration | `docs/stardust-stego-demo.md` |
