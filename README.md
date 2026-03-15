@@ -142,6 +142,7 @@ For BLS, the pHash can be omitted from the payload (e.g., looked up from a ledge
 - [Web UI](ui/) -- Scaffold-ETH 2 contract explorer (`docker compose up` → http://localhost:3000/debug)
 - [SE2 UI Customizations](docs/ui-se2-customizations.md) -- All changes made to upstream Scaffold-ETH 2 and the project-specific UI extensions
 - Stardust Stego Demo -- moved to [`perceptual-fuzzy-hash-test-vibe/docs/stardust-stego-demo.md`](https://github.com/mstattma/perceptual-fuzzy-hash-test-vibe/blob/master/docs/stardust-stego-demo.md)
+- [C2PA Integration Plan](docs/c2pa-integration-plan.md) -- C2PA v2.3 soft binding, manifest generation, resolution API, and DLT federated lookup
 - [Video Extension](docs/video-extension.md) -- Merkle tree approach for authenticating video with per-interval tamper detection
 
 The Web UI includes custom routes:
