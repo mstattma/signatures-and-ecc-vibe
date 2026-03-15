@@ -153,6 +153,18 @@ python3 scripts/patch_stardust.py  # apply local patches to stardust/ submodule
 - Stardust WM-ID path supports up to 256 bits; our BLS-BN158 payload is 184 bits.
 - UOV (400/504 bits) and BLS12-381 (408 bits) do NOT fit the current Stardust WM-ID path.
 
+## Downstream Consumer: Python Stego CLI
+
+This repo is consumed as a **git submodule** by [`perceptual-fuzzy-hash-test-vibe`](https://github.com/mstattma/perceptual-fuzzy-hash-test-vibe), which wraps our binaries and contracts in a Python CLI (`python -m stego`).
+
+The downstream CLI depends on:
+- `unified-api/stego_payload_tool` (BLS-BN158 keygen/sign/verify)
+- `stardust/build/embed/sffw-embed`, `align/align`, `extract/extract` (Stardust watermark transport)
+- `ethereum-ledger/deployment.json` (contract addresses for ledger interaction)
+- `ethereum-ledger/` contract ABIs (attestation schema)
+
+If you change any of these interfaces (binary CLI args, payload format, attestation schema, deployment.json structure), the Python CLI in the other repo will also need updating.
+
 ## Gotchas
 
 - `ui/` on OneDrive/WSL2 paths is very slow for `yarn install`. Docker avoids this.
@@ -173,3 +185,4 @@ python3 scripts/patch_stardust.py  # apply local patches to stardust/ submodule
 | Docker workflow | `docker-compose.yml` comments, `ethereum-ledger/README.md` |
 | UI pages or SE2 patches | `docs/ui-se2-customizations.md` |
 | Stardust integration | `docs/stardust-stego-demo.md` |
+| Binary interfaces or attestation schema | Also update downstream Python CLI in `perceptual-fuzzy-hash-test-vibe/stego/` |
