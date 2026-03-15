@@ -72,11 +72,16 @@ export function ImageSearch() {
     return [...imageEvents].slice(-20).reverse();
   }, [imageEvents]);
 
+  // Use a stable key to prevent infinite loops if useScaffoldEventHistory returns a new array reference
+  const recentEventsKey = useMemo(() => {
+    return recentEvents.map((e: any) => e.transactionHash + "-" + e.logIndex).join(",");
+  }, [recentEvents]);
+
   useEffect(() => {
     let cancelled = false;
     async function loadRecent() {
       if (!publicClient || !easAddress || recentEvents.length === 0) {
-        setRecentRecords([]);
+        setRecentRecords(prev => prev.length === 0 ? prev : []);
         return;
       }
       setRecentLoading(true);
@@ -106,7 +111,7 @@ export function ImageSearch() {
     return () => {
       cancelled = true;
     };
-  }, [publicClient, easAddress, recentEvents]);
+  }, [publicClient, easAddress, recentEventsKey]); // use string key instead of array ref
 
   const lookupBySignature = async () => {
     if (!canSearch || !resolverAddress || !publicClient || !easAddress) return;
