@@ -295,6 +295,33 @@ So the UI combines:
   - definitely unique
   - might exist / retry salt
 
+### Images page
+
+#### Added files
+
+- `ui/packages/nextjs/app/images/page.tsx`
+- `ui/packages/nextjs/app/images/_components/ImageSearch.tsx`
+- `ui/packages/nextjs/app/images/[uid]/page.tsx`
+
+#### Features
+
+- **Recent Image Records**: lists the latest 20 `ImageRegistered` events, decoded from EAS attestations with full field display (signature, salt, scheme, attester, pHash, fileName)
+- **Search by Signature**: takes full signature hex, computes sig prefix (first 16 bytes), queries `resolver.sigPrefixIndex()`
+- **Search by pHash + Salt**: computes `keccak256(uint16(version) || bytes24(pHash) || bytes2(salt))`, queries `resolver.pHashSaltIndex()`
+- **Search by Public Key**: filters loaded recent records by PK, linked from `/keys` page
+- **Image Detail Page** (`/images/[uid]`): shows full decoded attestation: UID, attester, timestamp, scheme, signature, PK, pHash, pHash version, salt, fileHash, metadataCID, fileName
+- Attester addresses link to `/keys?address=...`
+- Attestation UIDs link to `/images/[uid]`
+- Graceful fallback when ImageAuthResolver or EAS are not deployed on the current chain
+
+### Local EAS deployment
+
+The localhost Docker deployment now includes a real local EAS stack (`SchemaRegistry` + `EAS`), so the Images page works on localhost, not only on testnets. This required:
+
+- `ethereum-ledger/contracts/LocalEASImports.sol` — forces Hardhat to compile EAS artifacts
+- `ui/generate-contracts.js` — updated to export `EAS` and `SchemaRegistry` from the dependency package
+- `docker-compose.yml` — mounts host `ethereum-ledger/artifacts` into the UI container so EAS ABIs are available
+
 ## URL-Driven Linking Between Pages
 
 #### Modified file
@@ -311,6 +338,12 @@ This allows:
 
 The Keys page automatically reads the address from the URL and pre-fills the query field.
 
+### Keys → Images deep link
+
+Public key cells on the Keys page now link to `/images?publicKey=0x...`. The Images page reads this parameter and filters loaded recent records by matching PK.
+
+Flow: `Users` → `View Keys` → click a public key → `/images?publicKey=...` → see all images signed with that key.
+
 ## Generated External Contract File
 
 #### Generated file
@@ -323,7 +356,9 @@ Contains the runtime addresses and ABIs for:
 
 - `KeyRegistry`
 - `CrossChainBloomFilter`
-- optionally `ImageAuthResolver` (when deployed)
+- `ImageAuthResolver` (when deployed)
+- `EAS` (when deployed locally)
+- `SchemaRegistry` (when deployed locally)
 
 for the current local chain (`31337`) and any configured target networks.
 
@@ -375,5 +410,7 @@ Added project-specific files:
 - `ui/packages/nextjs/app/users/...`
 - `ui/packages/nextjs/app/keys/...`
 - `ui/packages/nextjs/app/bloom/...`
+- `ui/packages/nextjs/app/images/...` (search + detail pages)
+- `ui/packages/nextjs/app/images/[uid]/...` (dynamic detail route)
 
 These modifications turn a generic SE2 scaffold into a specialized explorer and operator console for the image authentication ledger.

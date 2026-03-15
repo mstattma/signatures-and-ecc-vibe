@@ -161,14 +161,16 @@ We register a single schema on EAS that captures the essential on-chain fields. 
 #### Schema Definition
 
 ```
-bytes32 sigPrefix,       // First 16 bytes of the stego signature (lookup index)
+bytes16 sigPrefix,       // First 16 bytes of the stego signature (lookup index)
 bytes signature,         // Full stego signature
 uint8 scheme,            // 0=UOV-80, 1=UOV-100, 2=BLS-BN158, 3=BLS12-381
 bytes publicKey,         // Stego signing public key (compressed)
 bytes24 pHash,           // Perceptual hash (up to 184 bits = 23 bytes, padded)
+uint16 pHashVersion,     // Perceptual hash algorithm version (enables hash evolution)
 bytes2 salt,             // Salt used in signing
 bytes32 fileHash,        // SHA-256 of the image after stego embedding
-bytes32 metadataCID      // IPFS CID (v1, raw) of the metadata JSON
+bytes32 metadataCID,     // IPFS CID (v1, raw) of the metadata JSON
+string fileName          // Original file name of the signed image
 ```
 
 **Schema UID**: Computed by EAS as `keccak256(abi.encodePacked(schema, resolverAddress, revocable))`.

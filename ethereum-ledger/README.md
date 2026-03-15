@@ -15,6 +15,20 @@ See [docs/ethereum-ledger-proposal.md](../docs/ethereum-ledger-proposal.md) for 
 
 The ReputationRegistry is defined in the [Ethereum Ledger Proposal](../docs/ethereum-ledger-proposal.md#reputation-system) but not yet deployed in the demo scripts (planned for Phase 2). The other three contracts are fully implemented and tested.
 
+### Attestation schema
+
+The current EAS attestation schema is:
+
+```
+bytes16 sigPrefix, bytes signature, uint8 scheme, bytes publicKey,
+bytes24 pHash, uint16 pHashVersion, bytes2 salt,
+bytes32 fileHash, bytes32 metadataCID, string fileName
+```
+
+- `pHashVersion` (added later) enables evolving the perceptual hash algorithm without breaking existing attestations
+- `fileName` (added later) stores the original file name for identification in the UI and records
+- Dedup key: `keccak256(pHashVersion || pHash || salt)`
+
 ## Quick Start
 
 ### Prerequisites
