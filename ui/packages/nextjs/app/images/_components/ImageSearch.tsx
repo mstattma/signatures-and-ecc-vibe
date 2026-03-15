@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { decodeAbiParameters, encodePacked, keccak256, parseAbi } from "viem";
 import { usePublicClient } from "wagmi";
 import externalContracts from "~~/contracts/externalContracts";
@@ -26,11 +27,6 @@ const IMAGE_ATTESTATION_TYPES = [
   { type: "bytes32", name: "metadataCID" },
 ] as const;
 
-const EAS_ADDRESSES: Record<number, `0x${string}`> = {
-  84532: "0x4200000000000000000000000000000000000021",
-  8453: "0x4200000000000000000000000000000000000021",
-};
-
 const SCHEME_NAMES: Record<number, string> = {
   0: "UOV-80",
   1: "UOV-100",
@@ -47,7 +43,7 @@ export function ImageSearch() {
   const { targetNetwork } = useTargetNetwork();
   const chainId = targetNetwork.id;
   const resolver = (externalContracts as any)?.[chainId]?.ImageAuthResolver;
-  const easAddress = EAS_ADDRESSES[chainId];
+  const eas = (externalContracts as any)?.[chainId]?.EAS;
 
   const [signature, setSignature] = useState("");
   const [sigSalt, setSigSalt] = useState("");
@@ -56,8 +52,11 @@ export function ImageSearch() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<any | null>(null);
+  const [recentRecords, setRecentRecords] = useState<any[]>([]);
+  const [recentLoading, setRecentLoading] = useState(false);
 
   const resolverAddress = resolver?.address as `0x${string}` | undefined;
+  const easAddress = eas?.address as `0x${string}` | undefined;
 
   const canSearch = useMemo(() => !!publicClient && !!resolverAddress && !!easAddress, [publicClient, resolverAddress, easAddress]);
 
@@ -72,6 +71,42 @@ export function ImageSearch() {
     if (!imageEvents) return [];
     return [...imageEvents].slice(-20).reverse();
   }, [imageEvents]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadRecent() {
+      if (!publicClient || !easAddress || recentEvents.length === 0) {
+        setRecentRecords([]);
+        return;
+      }
+      setRecentLoading(true);
+      try {
+        const records = await Promise.all(
+          recentEvents.map(async (event: any) => {
+            const uid = (event.args?.attestationUID || event.args?.attestationUid || event.args?.uid) as `0x${string}`;
+            if (!uid || /^0x0+$/.test(uid)) return null;
+            const att = await publicClient.readContract({
+              address: easAddress,
+              abi: easAbi,
+              functionName: "getAttestation",
+              args: [uid],
+            });
+            const decoded = decodeAbiParameters(IMAGE_ATTESTATION_TYPES as any, att.data as `0x${string}`);
+            return { uid, att, decoded, event };
+          }),
+        );
+        if (!cancelled) setRecentRecords(records.filter(Boolean));
+      } catch (e) {
+        if (!cancelled) console.error("Failed loading recent image records", e);
+      } finally {
+        if (!cancelled) setRecentLoading(false);
+      }
+    }
+    void loadRecent();
+    return () => {
+      cancelled = true;
+    };
+  }, [publicClient, easAddress, recentEvents]);
 
   const lookupBySignature = async () => {
     if (!canSearch || !resolverAddress || !publicClient || !easAddress) return;
@@ -183,7 +218,9 @@ export function ImageSearch() {
             “Recent” currently means the latest <strong>20</strong> `ImageRegistered` events on the active chain,
             sorted newest-first by block/log order.
           </p>
-          {recentEvents.length === 0 ? (
+          {recentLoading ? (
+            <div className="flex justify-center p-4"><span className="loading loading-spinner loading-md" /></div>
+          ) : recentRecords.length === 0 ? (
             <div className="text-sm text-base-content/70">No image registrations found on this chain yet.</div>
           ) : (
             <div className="overflow-x-auto">
@@ -193,16 +230,26 @@ export function ImageSearch() {
                     <th>UID</th>
                     <th>Attester</th>
                     <th>Sig Prefix</th>
+                    <th>Salt</th>
+                    <th>Signature</th>
+                    <th>Scheme</th>
                     <th>pHashSaltKey</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {recentEvents.map((event: any, idx: number) => (
+                  {recentRecords.map((record: any, idx: number) => (
                     <tr key={idx}>
-                      <td><code className="text-xs break-all">{event.args?.attestationUID || event.args?.attestationUid || event.args?.uid || "-"}</code></td>
-                      <td><code className="text-xs break-all">{event.args?.attester || "-"}</code></td>
-                      <td><code className="text-xs break-all">{event.args?.sigPrefix || "-"}</code></td>
-                      <td><code className="text-xs break-all">{event.args?.pHashSaltKey || "-"}</code></td>
+                      <td><Link href={`/images/${record.uid}`} className="link link-primary text-xs break-all">{record.uid}</Link></td>
+                      <td>
+                        <Link href={`/keys?address=${record.att.attester}`} className="link link-primary text-xs break-all">
+                          {record.att.attester}
+                        </Link>
+                      </td>
+                      <td><code className="text-xs break-all">{record.decoded[0]}</code></td>
+                      <td><code className="text-xs break-all">{record.decoded[5]}</code></td>
+                      <td><code className="text-xs break-all">{record.decoded[1]}</code></td>
+                      <td>{SCHEME_NAMES[Number(record.decoded[2])] || `Unknown (${record.decoded[2]})`}</td>
+                      <td><code className="text-xs break-all">{record.event.args?.pHashSaltKey || "-"}</code></td>
                     </tr>
                   ))}
                 </tbody>
@@ -245,8 +292,8 @@ export function ImageSearch() {
             <h2 className="card-title">Image Record</h2>
             <div className="grid gap-3 md:grid-cols-2 text-sm">
               <div><strong>Lookup mode:</strong> {result.lookup}</div>
-              <div><strong>Attestation UID:</strong> <code className="break-all">{result.uid}</code></div>
-              <div><strong>Attester:</strong> <code className="break-all">{result.attestation.attester}</code></div>
+              <div><strong>Attestation UID:</strong> <Link href={`/images/${result.uid}`} className="link link-primary break-all">{result.uid}</Link></div>
+              <div><strong>Attester:</strong> <Link href={`/keys?address=${result.attestation.attester}`} className="link link-primary break-all">{result.attestation.attester}</Link></div>
               <div><strong>Timestamp:</strong> {new Date(Number(result.attestation.time) * 1000).toLocaleString()}</div>
               <div><strong>Scheme:</strong> {SCHEME_NAMES[Number(result.decoded[2])] || `Unknown (${result.decoded[2]})`}</div>
               <div><strong>Salt:</strong> <code>{result.decoded[5]}</code></div>
