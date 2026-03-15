@@ -22,6 +22,7 @@ const IMAGE_ATTESTATION_TYPES = [
   { type: "bytes2", name: "salt" },
   { type: "bytes32", name: "fileHash" },
   { type: "bytes32", name: "metadataCID" },
+  { type: "string", name: "fileName" },
 ] as const;
 
 const SCHEME_NAMES: Record<number, string> = {
@@ -81,6 +82,7 @@ export default function ImageDetailPage() {
           <div><strong>pHash:</strong> <code className="break-all">{decoded[4]}</code></div>
           <div><strong>fileHash:</strong> <code className="break-all">{decoded[7]}</code></div>
           <div><strong>metadataCID:</strong> <code className="break-all">{decoded[8]}</code></div>
+          <div><strong>fileName:</strong> <code className="break-all">{decoded[9]}</code></div>
         </div>
       </div>
     </div>

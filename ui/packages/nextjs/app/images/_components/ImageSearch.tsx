@@ -27,6 +27,7 @@ const IMAGE_ATTESTATION_TYPES = [
   { type: "bytes2", name: "salt" },
   { type: "bytes32", name: "fileHash" },
   { type: "bytes32", name: "metadataCID" },
+  { type: "string", name: "fileName" },
 ] as const;
 
 const SCHEME_NAMES: Record<number, string> = {
@@ -338,6 +339,7 @@ export function ImageSearch() {
               <div className="md:col-span-2"><strong>pHash:</strong> <code className="break-all">{result.decoded[4]}</code></div>
               <div className="md:col-span-2"><strong>fileHash:</strong> <code className="break-all">{result.decoded[7]}</code></div>
               <div className="md:col-span-2"><strong>metadataCID:</strong> <code className="break-all">{result.decoded[8]}</code></div>
+              <div className="md:col-span-2"><strong>fileName:</strong> <code className="break-all">{result.decoded[9]}</code></div>
             </div>
           </div>
         </div>

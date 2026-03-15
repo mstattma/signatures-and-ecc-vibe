@@ -281,8 +281,8 @@ async function main() {
     eas = new ethers.Contract(easAddress, easAbi, signer);
 
     const attestationData = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["bytes16", "bytes", "uint8", "bytes", "bytes24", "uint16", "bytes2", "bytes32", "bytes32"],
-      [sigPrefix, signature, SCHEME_BLS_BN158, pk, pHash24, pHashVersion, salt, fileHash, metadataCID]
+      ["bytes16", "bytes", "uint8", "bytes", "bytes24", "uint16", "bytes2", "bytes32", "bytes32", "string"],
+      [sigPrefix, signature, SCHEME_BLS_BN158, pk, pHash24, pHashVersion, salt, fileHash, metadataCID, "demo_image.png"]
     );
 
     console.log("  Creating EAS attestation...");
@@ -343,7 +343,7 @@ async function main() {
 
       // Decode the attestation data
       const decoded = ethers.AbiCoder.defaultAbiCoder().decode(
-        ["bytes16", "bytes", "uint8", "bytes", "bytes24", "uint16", "bytes2", "bytes32", "bytes32"],
+        ["bytes16", "bytes", "uint8", "bytes", "bytes24", "uint16", "bytes2", "bytes32", "bytes32", "string"],
         att.data
       );
 

@@ -52,7 +52,7 @@ contract ImageAuthResolver is SchemaResolver {
         uint256 /* value */
     ) internal override returns (bool) {
         // Decode attestation data
-        // Schema: sigPrefix, signature, scheme, publicKey, pHash, pHashVersion, salt, fileHash, metadataCID
+        // Schema: sigPrefix, signature, scheme, publicKey, pHash, pHashVersion, salt, fileHash, metadataCID, fileName
         (
             bytes16 sigPrefix,
             ,  // signature (not needed in resolver)
@@ -62,10 +62,11 @@ contract ImageAuthResolver is SchemaResolver {
             uint16 pHashVersion,
             bytes2 salt,
             ,  // fileHash
-               // metadataCID
+            ,  // metadataCID
+               // fileName
         ) = abi.decode(
             attestation.data,
-            (bytes16, bytes, uint8, bytes, bytes24, uint16, bytes2, bytes32, bytes32)
+            (bytes16, bytes, uint8, bytes, bytes24, uint16, bytes2, bytes32, bytes32, string)
         );
 
         // 1. Enforce (pHash, salt) uniqueness on this chain
