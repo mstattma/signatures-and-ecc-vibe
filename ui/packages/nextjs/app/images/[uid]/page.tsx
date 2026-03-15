@@ -9,7 +9,7 @@ import externalContracts from "~~/contracts/externalContracts";
 import { useTargetNetwork } from "~~/hooks/scaffold-eth";
 
 const easAbi = parseAbi([
-  "function getAttestation(bytes32 uid) view returns ((bytes32 uid, bytes32 schema, uint64 time, uint64 expirationTime, uint64 revocationTime, bytes32 refUID, address attester, address recipient, bool revocable, bytes data))",
+  "function getAttestation(bytes32 uid) view returns ((bytes32 uid, bytes32 schema, uint64 time, uint64 expirationTime, uint64 revocationTime, bytes32 refUID, address recipient, address attester, bool revocable, bytes data))",
 ]);
 
 const IMAGE_ATTESTATION_TYPES = [

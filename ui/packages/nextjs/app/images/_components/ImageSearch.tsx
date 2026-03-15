@@ -13,7 +13,7 @@ const resolverAbi = parseAbi([
 ]);
 
 const easAbi = parseAbi([
-  "function getAttestation(bytes32 uid) view returns ((bytes32 uid, bytes32 schema, uint64 time, uint64 expirationTime, uint64 revocationTime, bytes32 refUID, address attester, address recipient, bool revocable, bytes data))",
+  "function getAttestation(bytes32 uid) view returns ((bytes32 uid, bytes32 schema, uint64 time, uint64 expirationTime, uint64 revocationTime, bytes32 refUID, address recipient, address attester, bool revocable, bytes data))",
 ]);
 
 const IMAGE_ATTESTATION_TYPES = [
@@ -208,7 +208,7 @@ export function ImageSearch() {
       <div className="alert alert-info mt-6">
         <span>
           No <code>ImageAuthResolver</code> is deployed for the current chain ({targetNetwork.name}).
-          This page becomes active on testnets/mainnets where EAS + resolver are deployed.
+          This view is only active on chains where the resolver and EAS are available.
         </span>
       </div>
     );

@@ -334,7 +334,7 @@ async function main() {
     if (uid !== ethers.ZeroHash) {
       // Read the attestation from EAS
       const easReadAbi = [
-        "function getAttestation(bytes32 uid) external view returns ((bytes32 uid, bytes32 schema, uint64 time, uint64 expirationTime, uint64 revocationTime, bytes32 refUID, address attester, address recipient, bool revocable, bytes data))"
+        "function getAttestation(bytes32 uid) external view returns ((bytes32 uid, bytes32 schema, uint64 time, uint64 expirationTime, uint64 revocationTime, bytes32 refUID, address recipient, address attester, bool revocable, bytes data))"
       ];
       const easRead = new ethers.Contract(easAddress, easReadAbi, signer);
       const att = await easRead.getAttestation(uid);
