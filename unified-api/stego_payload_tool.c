@@ -53,7 +53,9 @@ static int read_bin(const char *path, uint8_t *buf, int max_len) {
     return len;
 }
 
-static int cmd_generate(const char *phash_hex, const char *payload_path, const char *pk_path, const char *phash_path) {
+static int cmd_generate(const char *phash_hex, const char *payload_path,
+                        const char *pk_path, const char *phash_path,
+                        const char *sk_import_path) {
     uint8_t phash[STEGO_MAX_PHASH_BYTES];
     int phash_len = hex_to_bytes(phash_hex, phash, sizeof(phash));
     if (phash_len <= 0) {
@@ -70,16 +72,37 @@ static int cmd_generate(const char *phash_hex, const char *payload_path, const c
     uint8_t *sk = malloc(stego_sk_bytes());
     uint8_t payload[STEGO_MAX_PAYLOAD_BYTES];
     int pk_len = 0, sk_len = 0, payload_len = 0;
-    int rc = stego_keygen(pk, &pk_len, sk, &sk_len);
-    if (rc != STEGO_OK) {
-        fprintf(stderr, "stego_keygen failed\n");
-        return 1;
+
+    if (sk_import_path) {
+        /* Import existing key pair from files */
+        sk_len = read_bin(sk_import_path, sk, stego_sk_bytes());
+        if (sk_len <= 0) {
+            fprintf(stderr, "failed reading SK from %s\n", sk_import_path);
+            free(pk); free(sk);
+            return 1;
+        }
+        /* If a PK file already exists at pk_path, read it; otherwise derive later */
+        pk_len = read_bin(pk_path, pk, stego_pk_bytes());
+        if (pk_len <= 0) {
+            fprintf(stderr, "failed reading PK from %s (needed when importing SK)\n", pk_path);
+            free(pk); free(sk);
+            return 1;
+        }
+        fprintf(stderr, "Imported existing key pair (SK=%d bytes, PK=%d bytes)\n", sk_len, pk_len);
+    } else {
+        int rc = stego_keygen(pk, &pk_len, sk, &sk_len);
+        if (rc != STEGO_OK) {
+            fprintf(stderr, "stego_keygen failed\n");
+            free(pk); free(sk);
+            return 1;
+        }
     }
 
-    rc = stego_sign(payload, &payload_len, phash, phash_len, sk, sk_len,
+    int rc = stego_sign(payload, &payload_len, phash, phash_len, sk, sk_len,
                     NULL, 0, 0, 0, NULL, 0);
     if (rc != STEGO_OK) {
         fprintf(stderr, "stego_sign failed\n");
+        free(pk); free(sk);
         return 1;
     }
 
@@ -87,6 +110,7 @@ static int cmd_generate(const char *phash_hex, const char *payload_path, const c
         write_bin(pk_path, pk, pk_len) != 0 ||
         write_bin(phash_path, phash, phash_len) != 0) {
         fprintf(stderr, "failed writing output files\n");
+        free(pk); free(sk);
         return 1;
     }
 
@@ -98,6 +122,35 @@ static int cmd_generate(const char *phash_hex, const char *payload_path, const c
     printf("payload_hex=%s\n", payload_hex);
     printf("pk_bytes=%d\n", pk_len);
 
+    free(pk);
+    free(sk);
+    stego_cleanup();
+    return 0;
+}
+
+static int cmd_keygen(const char *pk_path, const char *sk_path) {
+    if (stego_init() != STEGO_OK) {
+        fprintf(stderr, "stego_init failed\n");
+        return 1;
+    }
+    uint8_t *pk = malloc(stego_pk_bytes());
+    uint8_t *sk = malloc(stego_sk_bytes());
+    int pk_len = 0, sk_len = 0;
+    int rc = stego_keygen(pk, &pk_len, sk, &sk_len);
+    if (rc != STEGO_OK) {
+        fprintf(stderr, "stego_keygen failed\n");
+        free(pk); free(sk);
+        return 1;
+    }
+    if (write_bin(pk_path, pk, pk_len) != 0 ||
+        write_bin(sk_path, sk, sk_len) != 0) {
+        fprintf(stderr, "failed writing key files\n");
+        free(pk); free(sk);
+        return 1;
+    }
+    printf("scheme=%s\n", stego_scheme_name());
+    printf("pk_bytes=%d\n", pk_len);
+    printf("sk_bytes=%d\n", sk_len);
     free(pk);
     free(sk);
     stego_cleanup();
@@ -141,16 +194,29 @@ static int cmd_verify(const char *payload_path, const char *pk_path, const char 
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage:\n  %s generate <phash_hex> <payload.bin> <pk.bin> <phash.bin>\n  %s verify <payload.bin> <pk.bin> <phash.bin>\n", argv[0], argv[0]);
+        fprintf(stderr,
+            "Usage:\n"
+            "  %s generate <phash_hex> <payload.bin> <pk.bin> <phash.bin> [--sk <sk.bin>]\n"
+            "  %s verify <payload.bin> <pk.bin> <phash.bin>\n"
+            "  %s keygen <pk.bin> <sk.bin>\n",
+            argv[0], argv[0], argv[0]);
         return 1;
     }
     if (strcmp(argv[1], "generate") == 0) {
-        if (argc != 6) return 1;
-        return cmd_generate(argv[2], argv[3], argv[4], argv[5]);
+        if (argc < 6) return 1;
+        const char *sk_import = NULL;
+        if (argc >= 8 && strcmp(argv[6], "--sk") == 0) {
+            sk_import = argv[7];
+        }
+        return cmd_generate(argv[2], argv[3], argv[4], argv[5], sk_import);
     }
     if (strcmp(argv[1], "verify") == 0) {
         if (argc != 5) return 1;
         return cmd_verify(argv[2], argv[3], argv[4]);
+    }
+    if (strcmp(argv[1], "keygen") == 0) {
+        if (argc != 4) return 1;
+        return cmd_keygen(argv[2], argv[3]);
     }
     fprintf(stderr, "Unknown command\n");
     return 1;
