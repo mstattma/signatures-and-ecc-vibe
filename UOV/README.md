@@ -5,7 +5,7 @@ This project implements compact post-quantum digital signatures based on [UOV (O
 This README focuses on the **UOV-specific** design and implementation. For the general fuzzy-signature idea and perceptual hash trade-offs, see:
 
 - [README.md](../README.md) - high-level fuzzy signature concept
-- [docs/perceptual-hash-considerations.md](../docs/perceptual-hash-considerations.md) - perceptual hash comparison across schemes
+- [perceptual-hash-considerations.md](https://github.com/mstattma/perceptual-fuzzy-hash-test-vibe/blob/master/docs/perceptual-hash-considerations.md) - perceptual hash comparison across schemes (in perceptual-fuzzy-hash-test-vibe repo)
 
 ## Overview
 

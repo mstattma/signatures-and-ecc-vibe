@@ -195,7 +195,7 @@ Without embedded pHash, the payload is constant-size regardless of pHash length:
 | BN-P158 | **184 bits** (23 bytes) | Smallest authenticated payload of any scheme |
 | BLS12-381 | **408 bits** (51 bytes) | |
 
-This mode is designed for [ledger-backed verification](../docs/ethereum-ledger-proposal.md) where the pHash is stored on-chain and retrieved by the verifier. See the [unified API docs](../unified-api/README.md#optional-phash-embedding-bls) for the full API.
+This mode is designed for ledger-backed verification (see [consumer-sdproof-candidate](https://github.com/mstattma/consumer-sdproof-candidate)) where the pHash is stored on-chain and retrieved by the verifier. See the [unified API docs](../unified-api/README.md#optional-phash-embedding-bls) for the full API.
 
 ## References
 

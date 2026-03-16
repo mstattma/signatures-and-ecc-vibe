@@ -9,12 +9,11 @@ Guidance for coding agents operating in this repository.
 | `UOV/` | Post-quantum UOV signatures with salt-in-digest message recovery | C99 |
 | `BLS/` | BLS BN-P158 and BLS12-381 signatures using RELIC | C99 |
 | `unified-api/` | Scheme-agnostic signature API (`stego_sig.h`) over UOV and BLS | C99 |
-| `scripts/` | Repo-level utilities | Bash, Python |
 | `docs/` | Signature scheme documentation | Markdown |
 
 **Note**: The Ethereum ledger, UI, C2PA resolution API, Stardust watermarking, and end-to-end demos have been moved to [`consumer-sdproof-candidate`](https://github.com/mstattma/consumer-sdproof-candidate), which consumes this repo as a submodule.
 
-When changing one area, check whether docs, Docker flow, generated ABI files, and `AGENTS.md` also need updates.
+When changing one area, check whether docs and `AGENTS.md` also need updates.
 
 ## Rules
 

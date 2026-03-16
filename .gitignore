@@ -17,15 +17,3 @@ BLS/size_test_*
 # Unified API build artifacts
 unified-api/stego_demo
 unified-api/stego_payload_tool
-
-# Ethereum ledger build artifacts
-ethereum-ledger/node_modules/
-ethereum-ledger/cache/
-ethereum-ledger/artifacts/
-ethereum-ledger/.env
-
-# Stardust (moved to perceptual-fuzzy-hash-test-vibe)
-tmp_stardust_demo/
-tmp_stego_test/
-tmp_stego_test_hd/
-ethereum-ledger/artifacts-host-sync/
