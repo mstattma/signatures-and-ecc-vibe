@@ -414,3 +414,110 @@ Added project-specific files:
 - `ui/packages/nextjs/app/images/[uid]/...` (dynamic detail route)
 
 These modifications turn a generic SE2 scaffold into a specialized explorer and operator console for the image authentication ledger.
+
+## Planned UI Updates (Not Yet Implemented)
+
+The following updates are needed to support the contracts and attestation schema changes from the C2PA integration work. The contracts have been updated (and deployed on local Hardhat), but the UI has not yet been changed to reflect them.
+
+### Priority: Critical
+
+**1. Regenerate `externalContracts.ts`**
+
+The current file has stale addresses and a stale `KeyRegistry` ABI missing all C2PA methods. After rebuilding the Docker stack, `generate-contracts.js` should pick up the new contracts automatically. The following must be verified:
+
+- `KeyRegistry` ABI includes C2PA methods (`registerC2PAKey`, `revokeC2PAKey`, `getC2PAKeyByCertHash`, `getC2PAKey`, `c2paKeyCount`, `C2PAKeyActivated`/`C2PAKeyRevoked` events)
+- `ImageAuthResolver` ABI includes new functions (`c2paLookup`, `c2paLookupJSON`, `c2paSchema`, `isDuplicate`, `mightBeDuplicateCrossChain`)
+- `ReputationRegistry` is present with full ABI
+- All addresses match `deployment.json`
+
+Also: add `ReputationRegistry: "reputationRegistry"` to the `CONTRACTS` map in `generate-contracts.js`, and align `export-abis.js` to include the same set of contracts.
+
+**2. Update attestation schema in image pages**
+
+Files: `ImageSearch.tsx`, `[uid]/page.tsx`
+
+The `IMAGE_ATTESTATION_TYPES` array must be updated from 10 fields to 12:
+
+```typescript
+// Old (10 fields):
+// sigPrefix, signature, scheme, publicKey, pHash, pHashVersion, salt, fileHash, metadataCID, fileName
+
+// New (12 fields):
+// sigPrefix, signature, scheme, publicKey, pHash, pHashVersion, salt, fileHash, metadataCID, c2paCertHash, c2paSig, fileName
+```
+
+All `decoded[N]` index references from index 8 onward must be shifted:
+- `decoded[8]` = `metadataCID` (unchanged)
+- `decoded[9]` = `c2paCertHash` (NEW)
+- `decoded[10]` = `c2paSig` (NEW)
+- `decoded[11]` = `fileName` (was `decoded[9]`)
+
+Display the new fields:
+- `c2paCertHash`: hex with link to KeyRegistry C2PA key lookup
+- `c2paSig`: hex (truncated with expand, ~128 hex chars)
+
+### Priority: Major
+
+**3. C2PA key support on Keys page**
+
+File: `KeyList.tsx`
+
+Add a new section "C2PA Signing Keys" below the existing BLS/UOV keys section:
+
+- Query `c2paKeyCount(address)` and `activeC2PAKeyIndex(address)` 
+- For each C2PA key, call `getC2PAKey(address, index)` and render: `pubKeyX`, `pubKeyY` (hex), `certHash` (hex), `certCID` (with IPFS link), `activatedAt`, `revokedAt`, active/revoked status
+- Add a "Register C2PA Key" form with fields: `pubKeyX`, `pubKeyY`, `certHash`, `certCID` → calls `registerC2PAKey`
+- Add a "Revoke C2PA Key" form → calls `revokeC2PAKey(keyIndex)`
+
+**4. Reputation page**
+
+New files:
+- `app/reputation/page.tsx`
+- `app/reputation/_components/ReputationView.tsx`
+
+Features:
+- Address lookup showing all 5 `getReputation()` fields: `attestationCount`, `endorsementScore`, `disputeCount`, `disputesWon`, `firstSeenAt`
+- Computed `score(address)` displayed prominently
+- Endorse/downvote buttons calling `endorse(address, bool)` (requires connected wallet with registered key)
+- Recent `Endorsed`, `DisputeRecorded`, `AttestationCounted` events
+- Deep link support: `/reputation?address=0x...`
+
+**5. Add nav link for Reputation**
+
+File: `Header.tsx`
+
+Add "Reputation" to the nav bar (e.g., `ShieldCheckIcon` from heroicons), between "Bloom Filter" and "Debug Contracts".
+
+### Priority: Moderate
+
+**6. Users page — reputation integration**
+
+File: `UserList.tsx`
+
+- Also listen for `C2PAKeyActivated` events to discover users who only have C2PA keys (currently only listens for `KeyActivated`)
+- For each user, call `ReputationRegistry.score(address)` and display a reputation column
+- Add attestation count column from `ReputationRegistry.getReputation(address)`
+
+**7. Homepage updates**
+
+File: `page.tsx`
+
+- Add "Reputation" card alongside existing Users/Keys/Images/Bloom/Explorer cards
+- Update "Debug Contracts" description to mention ImageAuthResolver and ReputationRegistry (currently only mentions KeyRegistry and CrossChainBloomFilter)
+- Mention C2PA integration in the hero text
+
+**8. Debug page text**
+
+File: `debug/page.tsx`
+
+- Add descriptions for `ImageAuthResolver` and `ReputationRegistry` alongside existing KeyRegistry and CrossChainBloomFilter descriptions
+
+### Priority: Minor
+
+**9. Extract `SCHEME_NAMES` to shared utility**
+
+The same scheme name map is duplicated in 4 files: `KeyList.tsx`, `ImageSearch.tsx`, `[uid]/page.tsx`, `UserList.tsx`. Extract to a shared file (e.g., `utils/schemeNames.ts`). Also add a future entry for ES256/P-256 if C2PA attestations use a distinct scheme number.
+
+**10. C2PA binding search on Images page**
+
+Optional enhancement: add a "Search by C2PA Binding" form on the Images page that calls `c2paLookup(alg, bindingValue)` or `c2paLookupJSON(inputJSON)` and displays the result. This would demonstrate the DLT K-V lookup directly from the UI.

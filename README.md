@@ -57,19 +57,25 @@ Verification-layer behavior:
 
 The ledger implementation is **already started** in `ethereum-ledger/` and the design is documented in `docs/ethereum-ledger-proposal.md`.
 
-Implemented so far:
+Implemented:
 
-- `KeyRegistry` for signing-key lifecycle and validity windows
+- `KeyRegistry` for signing-key lifecycle (BLS keys + C2PA ES256/P-256 keys with `registerC2PAKey`, `getC2PAKeyByCertHash`)
 - `CrossChainBloomFilter` for cross-chain duplicate detection primitives
-- `ImageAuthResolver` for EAS-based registration policy enforcement
-- Dockerized local Hardhat node + UI workflow
+- `P256Verifier` library for ES256 signature verification (RIP-7212 precompile on L2s, Solidity Jacobian fallback on Hardhat/L1)
+- `ImageAuthResolver` for EAS-based registration policy enforcement, with:
+  - `c2paSig` verification at attestation time (dual-key binding with Ethereum wallet + C2PA key)
+  - `c2paLookup` (native Solidity) and `c2paLookupJSON` (C2PA spec-conformant JSON string I/O)
+  - `c2paSchema` (DLT K-V schema with CAIP-10 contract address)
+- `ReputationRegistry` for attester reputation (attestation counts, endorsements, disputes)
+- Dockerized local Hardhat node + UI + IPFS + C2PA Resolution API workflow
 - End-to-end BLS-BN158 ledger demo scripts
+- C2PA Soft Binding Resolution API (`c2pa-resolution/`) — FastAPI service implementing the C2PA OpenAPI spec
 
-Planned / partially implemented next:
+Planned next:
 
-- `ReputationRegistry`
-- testnet deployment flow with real EAS attestations
-- richer metadata verification oracles
+- Base Sepolia testnet deployment with real EAS attestations
+- `/matches/byContent` endpoint (server-side Stardust extraction)
+- Production IPFS pinning (Storacha/Filebase)
 
 ## Implemented Signature Schemes
 

@@ -167,9 +167,11 @@ uint8 scheme,            // 0=UOV-80, 1=UOV-100, 2=BLS-BN158, 3=BLS12-381
 bytes publicKey,         // Stego signing public key (compressed)
 bytes24 pHash,           // Perceptual hash (up to 184 bits = 23 bytes, padded)
 uint16 pHashVersion,     // Perceptual hash algorithm version (enables hash evolution)
-bytes2 salt,             // Salt used in signing
+bytes2 salt,             // Salt used in signing / duplicate detection
 bytes32 fileHash,        // SHA-256 of the image after stego embedding
-bytes32 metadataCID,     // IPFS CID (v1, raw) of the metadata JSON
+bytes32 metadataCID,     // IPFS CID of the manifest directory (manifest.c2pa + metadata.json)
+bytes32 c2paCertHash,    // SHA-256 of the C2PA X.509 certificate (DER); links to KeyRegistry C2PA key
+bytes c2paSig,           // ES256 signature over sha256(pHash || pHashVersion || salt); verified on-chain
 string fileName          // Original file name of the signed image
 ```
 
@@ -180,15 +182,19 @@ string fileName          // Original file name of the signed image
 | Field | Bytes | Gas (storage) | Rationale |
 |---|---|---|---|
 | `sigPrefix` | 16 | Indexed topic | Primary lookup key; truncated to 128 bits for gas efficiency |
-| `signature` | 21-63 | ~2,000-5,000 | Full signature for verification; variable length |
+| `signature` | 21-63 | ~2,000-5,000 | Full BLS signature for verification; variable length |
 | `scheme` | 1 | ~200 | Needed to interpret signature and select verification algorithm |
-| `publicKey` | 21-97 | ~2,000-8,000 | Enables out-of-band PK lookup; verifier needs this |
-| `pHash` | 12-23 | ~1,000-2,000 | Enables verification when pHash not embedded in payload |
-| `salt` | 2 | ~200 | Needed for duplicate detection and UOV verification |
-| `fileHash` | 32 | ~3,000 | Integrity check; verifier compares against SHA-256(received image) |
-| `metadataCID` | 32 | ~3,000 | Pointer to IPFS metadata (thumbnail, EXIF, filename, etc.) |
+| `publicKey` | 21-97 | ~2,000-8,000 | BLS public key; verifier needs this |
+| `pHash` | 12-24 | ~1,000-2,000 | Perceptual hash (padded to bytes24); enables similarity comparison |
+| `pHashVersion` | 2 | ~200 | Hash algorithm version; enables algorithm evolution |
+| `salt` | 2 | ~200 | Needed for duplicate detection |
+| `fileHash` | 32 | ~3,000 | Integrity check; SHA-256 of the output image |
+| `metadataCID` | 32 | ~3,000 | IPFS CID of the manifest directory (manifest.c2pa + metadata.json) |
+| `c2paCertHash` | 32 | ~3,000 | SHA-256 of C2PA X.509 certificate DER; links to C2PA key in KeyRegistry |
+| `c2paSig` | 64 | ~5,000-6,000 | ES256 signature over sha256(pHash \|\| pHashVersion \|\| salt); verified on-chain by P256Verifier |
+| `fileName` | variable | ~1,000-3,000 | Original filename; variable-length string |
 
-**Total on-chain data**: ~137-266 bytes depending on scheme. Estimated gas for attestation: **~60,000-100,000 gas**.
+**Total on-chain data**: ~235-400 bytes depending on scheme and fileName length. Estimated gas for EAS attestation data storage: **~80,000-120,000 gas** (data only, before resolver execution).
 
 #### What goes to IPFS (metadataCID)
 
@@ -314,7 +320,17 @@ contract ImageAuthResolver is SchemaResolver {
 }
 ```
 
-**Gas cost of the resolver**: Adds ~65,000-85,000 gas: two SSTORE operations for indexes (20,000 each), one SLOAD + external call for key validity check (~5,000), one external call to reputation registry (~25,000 including the SSTORE for imageCount). This is a one-time cost per registration, and the indexes enable O(1) on-chain lookups.
+**Gas cost of the resolver**: The resolver's `onAttest` adds gas for five checks:
+
+| Step | Gas | Notes |
+|---|---|---|
+| Dedup check (pHashSaltIndex SLOAD) | ~2,100 | View of existing index |
+| BLS key validity check (external call) | ~5,000 | SLOAD + external call to KeyRegistry |
+| C2PA signature verification (P-256) | ~3,450 (RIP-7212) or ~200,000-300,000 (Solidity fallback) | RIP-7212 available on Base, Optimism, Arbitrum |
+| Index writes (2x SSTORE) | ~40,000 | pHashSaltIndex + sigPrefixIndex (20K each, new slots) |
+| Bloom filter update (external call) | ~50,000-80,000 | 10 SSTORE updates for bit positions |
+
+**Total resolver overhead**: ~100,000-130,000 gas on L2 chains with RIP-7212, or ~300,000-430,000 gas on chains without the precompile (including local Hardhat). This is added on top of the base EAS attestation gas.
 
 ### Cross-Chain Duplicate Detection
 
@@ -721,27 +737,55 @@ This prevents an attacker who compromises an old (revoked) key from creating new
 
 ### Gas Cost Summary
 
+Gas estimates assume Base/Optimism L2 with RIP-7212 P-256 precompile available. On chains without RIP-7212 (including local Hardhat), add ~200-300K gas for P-256 verification in the resolver.
+
+**One-time operations:**
+
 | Operation | Gas (L2) | Cost on Base (~$0.001/1000 gas) | Notes |
 |---|---|---|---|
-| Schema registration | ~250,000 | ~$0.25 | One-time, per schema (need 4+ schemas) |
-| Resolver deployment | ~800,000 | ~$0.80 | One-time |
-| KeyRegistry deployment | ~600,000 | ~$0.60 | One-time |
+| Schema registration | ~250,000 | ~$0.25 | One-time per schema |
+| ImageAuthResolver deployment | ~2,000,000 | ~$2.00 | Includes P256Verifier library (viaIR compilation) |
+| KeyRegistry deployment | ~800,000 | ~$0.80 | Includes C2PA key storage |
 | ReputationRegistry deployment | ~1,200,000 | ~$1.20 | One-time |
 | BloomFilter deployment | ~1,300,000 | ~$1.30 | One-time per chain; 64 SSTORE for filter |
-| Key registration/rotation | ~120,000-140,000 | ~$0.12-0.14 | Per key rotation |
-| Image attestation (with resolver + Bloom) | ~180,000-250,000 | ~$0.18-0.25 | Per image; includes indexes + key check + reputation + Bloom add |
-| Bloom filter check | ~5,000-10,000 | Free (view) | Per pre-registration dedup check |
-| Bloom cross-chain sync | ~50,000 per 10 entries | ~$0.005/entry | Periodic batch sync from other chains |
-| Rate a user | ~50,000 | ~$0.05 | One-time per (rater, user) pair |
-| Rate an image | ~60,000 | ~$0.06 | One-time per (rater, image) pair |
-| Submit user metadata | ~25,000 | ~$0.025 | Per metadata item |
-| Lookup by sigPrefix (on-chain) | ~2,100 | Free (view) | Per verification |
-| Get reputation score | ~10,000 | Free (view) | Per query |
+
+**Per-user operations:**
+
+| Operation | Gas (L2) | Cost on Base | Notes |
+|---|---|---|---|
+| Register BLS key | ~120,000-140,000 | ~$0.12-0.14 | Per key rotation (revokes previous) |
+| Register C2PA key | ~140,000-160,000 | ~$0.14-0.16 | Per key rotation; stores pubKeyX, pubKeyY, certHash, certCID |
+| Endorse/downvote user | ~50,000 | ~$0.05 | One-time per (rater, target) pair |
+| Revoke key (BLS or C2PA) | ~30,000 | ~$0.03 | Per revocation |
+
+**Per-image operations:**
+
+| Operation | Gas (L2 with RIP-7212) | Cost on Base | Notes |
+|---|---|---|---|
+| Image attestation (full) | ~220,000-350,000 | ~$0.22-0.35 | EAS attest + resolver (dedup + BLS key check + P-256 verify + indexes + Bloom) |
+| Image attestation (no C2PA sig) | ~180,000-250,000 | ~$0.18-0.25 | If c2paCertHash is zero, P-256 verification is skipped |
+| Bloom filter check | ~5,000-10,000 | Free (view) | Pre-registration dedup check |
+| Bloom cross-chain sync | ~50,000 per 10 entries | ~$0.005/entry | Periodic batch sync |
 | Revoke attestation | ~30,000 | ~$0.03 | For key compromise |
 
-**Estimated cost per image registration: $0.18-0.25 on Base/Optimism** (fully on-chain with Bloom filter). With hybrid registration (LightRegistration + Bloom): ~$0.10-0.15. This includes the resolver's duplicate detection, Bloom filter update, key validity check, signature-prefix indexing, and reputation registry notification.
+**Read operations (free — view calls):**
 
-**One-time deployment cost: ~$5.15 per chain** for all contracts and schemas. For 3 chains: ~$15.45 total.
+| Operation | Gas | Notes |
+|---|---|---|
+| Lookup by sigPrefix | ~2,100 | `sigPrefixIndex` SLOAD |
+| Lookup by pHash+salt | ~2,100 | `pHashSaltIndex` SLOAD |
+| C2PA lookup (native) | ~2,100-5,000 | `c2paLookup` — sig prefix extraction + SLOAD |
+| C2PA lookup (JSON) | ~10,000-30,000 | `c2paLookupJSON` — base64 decode + JSON construction on-chain |
+| C2PA schema | ~5,000-15,000 | `c2paSchema` — CAIP-10 string construction |
+| Get reputation | ~10,000 | Full reputation tuple |
+| Get C2PA key by certHash | ~5,000 | Returns (pubKeyX, pubKeyY, active) |
+| Bloom mightContain | ~5,000-10,000 | 10 SLOAD for bit positions |
+
+**Estimated cost per image registration: $0.22-0.35 on Base/Optimism** (fully on-chain with Bloom filter and C2PA signature verification via RIP-7212). Without C2PA binding (c2paCertHash = 0): ~$0.18-0.25. With hybrid registration (LightRegistration + Bloom): ~$0.12-0.18.
+
+**One-time deployment cost: ~$5.55 per chain** for all contracts and schemas. For 3 chains: ~$16.65 total.
+
+**Note on Hardhat/chains without RIP-7212**: The Solidity P-256 fallback adds ~200-300K gas per attestation. This makes local testing more expensive in gas terms but costs nothing (local chain). On production L2s with RIP-7212 (Base, Optimism, Arbitrum), P-256 verification costs only ~3,450 gas.
 
 **Cross-chain Bloom sync overhead: ~$0.50-5/month** depending on volume and sync frequency.
 
@@ -755,7 +799,7 @@ const tx = await eas.multiAttest([
 ]);
 ```
 
-Batching amortizes the base transaction cost (~21,000 gas) across multiple attestations. For a batch of 10 images, the per-image cost drops to approximately **$0.08-0.10**.
+Batching amortizes the base transaction cost (~21,000 gas) across multiple attestations. For a batch of 10 images with C2PA signature verification, the per-image cost drops to approximately **$0.12-0.18** (vs ~$0.22-0.35 individual). Without C2PA binding: **$0.08-0.12**.
 
 ### Off-Chain Attestation Mode
 

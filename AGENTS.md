@@ -12,6 +12,7 @@ Guidance for coding agents operating in this repository.
 | `scripts/` | Repo-level utilities | Bash, Python |
 | `ethereum-ledger/` | Solidity contracts, Hardhat scripts, Dockerized local chain | Solidity, JS |
 | `ui/` | Scaffold-ETH 2 UI with custom pages (has its own `ui/AGENTS.md`) | TypeScript, React |
+| `c2pa-resolution/` | C2PA Soft Binding Resolution API (FastAPI) | Python |
 | `docs/` | Design documents and proposals | Markdown |
 
 When changing one area, check whether docs, Docker flow, generated ABI files, and `AGENTS.md` also need updates.
@@ -29,7 +30,7 @@ When changing one area, check whether docs, Docker flow, generated ABI files, an
 ### Full local stack (Docker, recommended)
 
 ```bash
-docker compose up -d          # Hardhat node :8545 + SE2 UI :3000
+docker compose up -d          # Hardhat node :8545 + SE2 UI :3000 + IPFS :5001/:8080 + C2PA API :8000
 docker compose logs -f
 ```
 
@@ -86,6 +87,25 @@ After contract changes: `cd ethereum-ledger && npx hardhat compile && node scrip
 
 The `scripts/` directory previously contained `stardust_image_demo.sh` and `patch_stardust.py`, which have been moved to `perceptual-fuzzy-hash-test-vibe`.
 
+### `c2pa-resolution/`
+
+Python FastAPI service implementing the C2PA Soft Binding Resolution API spec.
+
+```bash
+# Runs as Docker container (started by docker compose up)
+# Manual: cd c2pa-resolution && pip install -r requirements.txt && uvicorn app:app
+```
+
+Endpoints: `/matches/byBinding`, `/manifests/{id}`, `/services/supportedAlgorithms`, `/health`.
+Backend: Ethereum ledger (ImageAuthResolver `sigPrefixIndex` + `c2paLookup`) + IPFS (kubo).
+
+Key contracts:
+- `KeyRegistry.sol`: BLS keys (`registerKey`, `isKeyCurrentlyValid`) + C2PA P-256 keys (`registerC2PAKey`, `revokeC2PAKey`, `getC2PAKeyByCertHash`, `getC2PAKey`, `c2paKeyCount`)
+- `ImageAuthResolver.sol`: `c2paLookup` (native Solidity), `c2paLookupJSON` (C2PA spec-conformant JSON string I/O), `c2paSchema` (DLT K-V schema with CAIP-10)
+- `P256Verifier.sol`: ES256 signature verification (RIP-7212 precompile + Solidity Jacobian fallback)
+
+Attestation schema (12 fields): `sigPrefix(bytes16), signature(bytes), scheme(uint8), publicKey(bytes), pHash(bytes24), pHashVersion(uint16), salt(bytes2), fileHash(bytes32), metadataCID(bytes32), c2paCertHash(bytes32), c2paSig(bytes), fileName(string)`
+
 ## Code Style
 
 ### General
@@ -112,7 +132,9 @@ The `scripts/` directory previously contained `stardust_image_demo.sh` and `patc
 
 - Version `0.8.27`, EVM target `cancun`, optimizer on.
 - Small focused contracts with explicit events.
-- Preserve separation: `KeyRegistry` = key lifecycle, `CrossChainBloomFilter` = dedup, `ImageAuthResolver` = EAS resolver.
+- Preserve separation: `KeyRegistry` = key lifecycle (BLS + C2PA P-256), `CrossChainBloomFilter` = dedup, `ImageAuthResolver` = EAS resolver + P-256 verification, `ReputationRegistry` = attester reputation, `P256Verifier` = ECDSA-P256 library.
+- `P256Verifier.sol` uses RIP-7212 precompile (0x100) when available, falls back to Solidity Jacobian EC math.
+- `hardhat.config.js` has `viaIR: true` enabled (required for P256Verifier compilation — stack too deep otherwise).
 - Consider gas cost before adding on-chain state; prefer IPFS for bulk data.
 - If interfaces change, update deploy/demo scripts and `docs/ethereum-ledger-proposal.md`.
 
@@ -179,3 +201,5 @@ If you change any of these interfaces (binary CLI args, payload format, attestat
 | UI pages or SE2 patches | `docs/ui-se2-customizations.md` |
 | Stardust integration | `docs/stardust-stego-demo.md` |
 | Binary interfaces or attestation schema | Also update downstream Python CLI in `perceptual-fuzzy-hash-test-vibe/stego/` |
+| C2PA resolution API | `c2pa-resolution/app.py`, `docs/c2pa-integration-plan.md` |
+| IPFS / Docker services | `docker-compose.yml`, `docs/c2pa-integration-plan.md` |
