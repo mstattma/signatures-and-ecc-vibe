@@ -11,7 +11,9 @@ Guidance for coding agents operating in this repository.
 | `unified-api/` | Scheme-agnostic signature API (`stego_sig.h`) over UOV and BLS | C99 |
 | `docs/` | Signature scheme documentation | Markdown |
 
-**Note**: The Ethereum ledger, UI, C2PA resolution API, Stardust watermarking, and end-to-end demos have been moved to [`consumer-sdproof-candidate`](https://github.com/mstattma/consumer-sdproof-candidate), which consumes this repo as a submodule.
+**Note**: The Ethereum ledger, UI, C2PA resolution API, Stardust watermarking, and end-to-end demos have been moved to [`consumer-sdproof-candidate`](https://github.com/mstattma/consumer-sdproof-candidate), which consumes this repo as a submodule. Residual `ethereum-ledger/` and `ui/` directories may still exist locally with build artifacts (node_modules, cache) — these are gitignored and contain no source code.
+
+The `BLS/relic` submodule (RELIC cryptographic toolkit) is required for BLS builds.
 
 When changing one area, check whether docs and `AGENTS.md` also need updates.
 
