@@ -19,7 +19,7 @@ const EAS_ADDRESS = "0x4200000000000000000000000000000000000021";
 const SCHEMA_REGISTRY_ADDRESS = "0x4200000000000000000000000000000000000020";
 
 const SCHEMA_STRING =
-  "bytes16 sigPrefix, bytes signature, uint8 scheme, bytes publicKey, bytes24 pHash, uint16 pHashVersion, bytes2 salt, bytes32 fileHash, bytes32 metadataCID, string fileName";
+  "bytes16 sigPrefix, bytes signature, uint8 scheme, bytes publicKey, bytes24 pHash, uint16 pHashVersion, bytes2 salt, bytes32 fileHash, bytes32 metadataCID, bytes32 c2paCertHash, bytes c2paSig, string fileName";
 
 async function main() {
   const [deployer] = await ethers.getSigners();
@@ -76,7 +76,15 @@ async function main() {
   resolverAddr = await resolver.getAddress();
   console.log("ImageAuthResolver deployed to:", resolverAddr);
 
-  // 5. Authorize adders on the Bloom filter
+  // 5. Deploy ReputationRegistry
+  console.log("--- Deploying ReputationRegistry ---");
+  const ReputationRegistry = await ethers.getContractFactory("ReputationRegistry");
+  const reputationRegistry = await ReputationRegistry.deploy(keyRegistryAddr);
+  await reputationRegistry.waitForDeployment();
+  const reputationRegistryAddr = await reputationRegistry.getAddress();
+  console.log("ReputationRegistry deployed to:", reputationRegistryAddr);
+
+  // 6. Authorize adders on the Bloom filter
   console.log("--- Authorizing on BloomFilter ---");
   if (resolverAddr !== ethers.ZeroAddress) {
     const authTx = await bloomFilter.authorizeAdder(resolverAddr);
@@ -88,7 +96,7 @@ async function main() {
   await authTx2.wait();
   console.log("  Deployer authorized");
 
-  // 6. Register schema on EAS SchemaRegistry
+  // 7. Register schema on EAS SchemaRegistry
   let schemaUID = "0x" + "00".repeat(32);
   console.log("--- Registering EAS Schema ---");
   const schemaRegistry = await ethers.getContractAt(
@@ -109,6 +117,7 @@ async function main() {
   console.log("KeyRegistry:         ", keyRegistryAddr);
   console.log("CrossChainBloomFilter:", bloomFilterAddr);
   console.log("ImageAuthResolver:   ", resolverAddr);
+  console.log("ReputationRegistry:  ", reputationRegistryAddr);
   console.log("Schema UID:          ", schemaUID);
 
   // Save addresses to deployment.json
@@ -118,7 +127,9 @@ async function main() {
     keyRegistry: keyRegistryAddr,
     bloomFilter: bloomFilterAddr,
     resolver: resolverAddr,
+    reputationRegistry: reputationRegistryAddr,
     schemaUID,
+    schemaString: SCHEMA_STRING,
     eas: easAddress,
     schemaRegistry: schemaRegistryAddress,
     timestamp: new Date().toISOString(),

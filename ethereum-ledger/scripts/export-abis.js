@@ -15,7 +15,7 @@ const ARTIFACTS_DIR = path.join(__dirname, "..", "artifacts", "contracts");
 const DEPLOYMENT_FILE = path.join(__dirname, "..", "deployment.json");
 const OUTPUT_FILE = path.join(__dirname, "..", "..", "ui", "packages", "nextjs", "contracts", "externalContracts.ts");
 
-const CONTRACTS = ["KeyRegistry", "CrossChainBloomFilter", "ImageAuthResolver"];
+const CONTRACTS = ["KeyRegistry", "CrossChainBloomFilter", "ImageAuthResolver", "ReputationRegistry"];
 
 function loadABI(contractName) {
   const artifactPath = path.join(ARTIFACTS_DIR, `${contractName}.sol`, `${contractName}.json`);
@@ -44,6 +44,7 @@ function main() {
     KeyRegistry: deployment.keyRegistry || "0x0000000000000000000000000000000000000000",
     CrossChainBloomFilter: deployment.bloomFilter || "0x0000000000000000000000000000000000000000",
     ImageAuthResolver: deployment.resolver || "0x0000000000000000000000000000000000000000",
+    ReputationRegistry: deployment.reputationRegistry || "0x0000000000000000000000000000000000000000",
   };
 
   // Load ABIs
