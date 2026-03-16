@@ -1,7 +1,7 @@
-# Docker Compose: Hardhat node + Scaffold-ETH 2 UI
+# Docker Compose: Hardhat node + Scaffold-ETH 2 UI + IPFS + C2PA Resolution API
 #
 # Usage:
-#   docker compose up              # Start node + UI
+#   docker compose up              # Start all services
 #   docker compose up -d           # Start in background
 #   docker compose logs -f         # Follow all logs
 #   docker compose logs -f node    # Follow node logs only
@@ -9,8 +9,10 @@
 #   docker compose down            # Stop everything
 #
 # Services:
-#   node: Hardhat node on http://localhost:8545 (auto-deploys contracts)
-#   ui:   Scaffold-ETH 2 on http://localhost:3000 (auto-generates contract ABIs)
+#   node:       Hardhat node on http://localhost:8545 (auto-deploys contracts)
+#   ui:         Scaffold-ETH 2 on http://localhost:3000 (auto-generates contract ABIs)
+#   ipfs:       Kubo IPFS node on http://localhost:5001 (API) / http://localhost:8080 (gateway)
+#   c2pa-api:   C2PA Soft Binding Resolution API on http://localhost:8000
 #
 # The UI waits for the node to deploy contracts, then generates
 # externalContracts.ts from the deployment and starts Next.js.
@@ -62,6 +64,42 @@ services:
       # Tell Next.js to bind to all interfaces
       - HOSTNAME=0.0.0.0
 
+  ipfs:
+    image: ipfs/kubo:latest
+    ports:
+      - "5001:5001"   # RPC API
+      - "8080:8080"   # HTTP gateway
+    volumes:
+      - ipfs-data:/data/ipfs
+    environment:
+      # Allow API access from other containers and host
+      - IPFS_PROFILE=server
+    healthcheck:
+      test: ["CMD", "ipfs", "id"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  c2pa-api:
+    build:
+      context: ./c2pa-resolution
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - shared-data:/shared:ro
+    depends_on:
+      node:
+        condition: service_healthy
+      ipfs:
+        condition: service_healthy
+    environment:
+      - LEDGER_RPC=http://node:8545
+      - IPFS_API_URL=http://ipfs:5001
+      - DEPLOYMENT_JSON=/shared/deployment.json
+
 volumes:
   shared-data:
   nextjs-cache:
+  ipfs-data:
