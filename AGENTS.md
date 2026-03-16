@@ -10,10 +10,9 @@ Guidance for coding agents operating in this repository.
 | `BLS/` | BLS BN-P158 and BLS12-381 signatures using RELIC | C99 |
 | `unified-api/` | Scheme-agnostic signature API (`stego_sig.h`) over UOV and BLS | C99 |
 | `scripts/` | Repo-level utilities | Bash, Python |
-| `ethereum-ledger/` | Solidity contracts, Hardhat scripts, Dockerized local chain | Solidity, JS |
-| `ui/` | Scaffold-ETH 2 UI with custom pages (has its own `ui/AGENTS.md`) | TypeScript, React |
-| `c2pa-resolution/` | C2PA Soft Binding Resolution API (FastAPI) | Python |
-| `docs/` | Design documents and proposals | Markdown |
+| `docs/` | Signature scheme documentation | Markdown |
+
+**Note**: The Ethereum ledger, UI, C2PA resolution API, Stardust watermarking, and end-to-end demos have been moved to [`consumer-sdproof-candidate`](https://github.com/mstattma/consumer-sdproof-candidate), which consumes this repo as a submodule.
 
 When changing one area, check whether docs, Docker flow, generated ABI files, and `AGENTS.md` also need updates.
 
@@ -21,20 +20,10 @@ When changing one area, check whether docs, Docker flow, generated ABI files, an
 
 - No `.cursor/rules/`, `.cursorrules`, or `.github/copilot-instructions.md` exist. This file is the only agent guidance.
 - Prefer minimal, targeted changes. Do not reformat unrelated code.
-- Preserve standalone nature of subprojects (`ethereum-ledger/` is intentionally separate from `ui/packages/hardhat`).
-- Do not silently change security-sensitive defaults (salt size, pHash limits, signature layout, gas assumptions).
-- Stardust has been moved to `perceptual-fuzzy-hash-test-vibe`; this repo no longer contains it.
+- Do not silently change security-sensitive defaults (salt size, pHash limits, signature layout).
+- This repo contains only signature schemes. Ledger, UI, C2PA, Stardust are in `consumer-sdproof-candidate`.
 
 ## Build / Test Quick Reference
-
-### Full local stack (Docker, recommended)
-
-```bash
-docker compose up -d          # Hardhat node :8545 + SE2 UI :3000 + IPFS :5001/:8080 + C2PA API :8000
-docker compose logs -f
-```
-
-This is the preferred development path for both ledger and UI work.
 
 ### `UOV/pqov/`
 
@@ -63,49 +52,6 @@ make stego_payload_tool SCHEME=bls-bn158      # payload tool (consumed by downst
 make clean
 ```
 
-### `ethereum-ledger/`
-
-```bash
-npx hardhat compile
-npx hardhat run scripts/deploy.js --network localhost
-npx hardhat run scripts/demo.js --network localhost
-SIMULATE_NETWORK=arbitrumNova npx hardhat run scripts/demo.js --network localhost
-node scripts/export-abis.js      # regenerate UI contract ABIs
-```
-
-### `ui/`
-
-Docker-first (preferred; started by `docker compose up`). Manual fallback:
-
-```bash
-cd ui && yarn install && yarn workspace @se-2/nextjs dev
-```
-
-After contract changes: `cd ethereum-ledger && npx hardhat compile && node scripts/export-abis.js`
-
-### `scripts/` (repo-level)
-
-The `scripts/` directory previously contained `stardust_image_demo.sh` and `patch_stardust.py`, which have been moved to `perceptual-fuzzy-hash-test-vibe`.
-
-### `c2pa-resolution/`
-
-Python FastAPI service implementing the C2PA Soft Binding Resolution API spec.
-
-```bash
-# Runs as Docker container (started by docker compose up)
-# Manual: cd c2pa-resolution && pip install -r requirements.txt && uvicorn app:app
-```
-
-Endpoints: `/matches/byBinding`, `/manifests/{id}`, `/services/supportedAlgorithms`, `/health`.
-Backend: Ethereum ledger (ImageAuthResolver `sigPrefixIndex` + `c2paLookup`) + IPFS (kubo).
-
-Key contracts:
-- `KeyRegistry.sol`: BLS keys (`registerKey`, `isKeyCurrentlyValid`) + C2PA P-256 keys (`registerC2PAKey`, `revokeC2PAKey`, `getC2PAKeyByCertHash`, `getC2PAKey`, `c2paKeyCount`)
-- `ImageAuthResolver.sol`: `c2paLookup` (native Solidity), `c2paLookupJSON` (C2PA spec-conformant JSON string I/O), `c2paSchema` (DLT K-V schema with CAIP-10)
-- `P256Verifier.sol`: ES256 signature verification (RIP-7212 precompile + Solidity Jacobian fallback)
-
-Attestation schema (12 fields): `sigPrefix(bytes16), signature(bytes), scheme(uint8), publicKey(bytes), pHash(bytes24), pHashVersion(uint16), salt(bytes2), fileHash(bytes32), metadataCID(bytes32), c2paCertHash(bytes32), c2paSig(bytes), fileName(string)`
-
 ## Code Style
 
 ### General
@@ -128,78 +74,20 @@ Attestation schema (12 fields): `sigPrefix(bytes16), signature(bytes), scheme(ui
 - Never silently truncate oversized pHashes (`ov_sign_digest` returns `-2`).
 - Note: `unified-api/Makefile` uses `-O1` due to a RELIC BLS12-381 crash at `-O2`.
 
-### Solidity (`ethereum-ledger/contracts/`)
+## Downstream Consumer
 
-- Version `0.8.27`, EVM target `cancun`, optimizer on.
-- Small focused contracts with explicit events.
-- Preserve separation: `KeyRegistry` = key lifecycle (BLS + C2PA P-256), `CrossChainBloomFilter` = dedup, `ImageAuthResolver` = EAS resolver + P-256 verification, `ReputationRegistry` = attester reputation, `P256Verifier` = ECDSA-P256 library.
-- `P256Verifier.sol` uses RIP-7212 precompile (0x100) when available, falls back to Solidity Jacobian EC math.
-- `hardhat.config.js` has `viaIR: true` enabled (required for P256Verifier compilation — stack too deep otherwise).
-- Consider gas cost before adding on-chain state; prefer IPFS for bulk data.
-- If interfaces change, update deploy/demo scripts and `docs/ethereum-ledger-proposal.md`.
+This repo is consumed as a git submodule by [`consumer-sdproof-candidate`](https://github.com/mstattma/consumer-sdproof-candidate), which uses `unified-api/stego_payload_tool` for BLS-BN158 signing.
 
-### JavaScript (`ethereum-ledger/scripts/`)
-
-- CommonJS (`require`). Keep scripts as one-off operational tools.
-- Print actionable summaries (addresses, gas with USD, network).
-- Gas cost display uses `formatGas()` with per-network pricing and `ETH_PRICE_USD` env override.
-
-### TypeScript / React (`ui/`)
-
-- Follow SE2 conventions and `ui/AGENTS.md`.
-- App Router patterns in `packages/nextjs/app/`.
-- Use SE2 hooks: `useScaffoldReadContract`, `useScaffoldWriteContract`, `useScaffoldEventHistory`.
-- Our contracts are in `externalContracts.ts`, not `deployedContracts.ts`.
-- `decodeTxData.ts` is patched to decode both deployed and external contracts and to label contract creation transactions.
-
-### Shell / Python (`scripts/`)
-
-- Bash scripts: `set -euo pipefail`.
-- Stardust patch script has moved to `perceptual-fuzzy-hash-test-vibe/stego/patch_stardust.py`.
-
-## UI Extensions That Must Be Preserved
-
-- Custom pages: `/users` (event-driven), `/keys` (state-driven, accepts `?address=`), `/bloom`
-- Homepage and debug page have project-specific copy, not SE2 defaults.
-- `decodeTxData.ts` patches: external contract decoding + contract creation labeling.
-
-## Stardust (moved)
-
-Stardust watermark transport has been moved to `perceptual-fuzzy-hash-test-vibe`. This repo no longer contains the `stardust/` submodule, `patch_stardust.py`, or `stardust_image_demo.sh`.
-
-## Downstream Consumer: Python Stego CLI
-
-This repo is consumed as a **git submodule** by [`perceptual-fuzzy-hash-test-vibe`](https://github.com/mstattma/perceptual-fuzzy-hash-test-vibe), which wraps our binaries and contracts in a Python CLI (`python -m stego`).
-
-The downstream CLI depends on:
-- `unified-api/stego_payload_tool` (BLS-BN158 keygen/sign/verify)
-- `ethereum-ledger/deployment.json` (contract addresses for ledger interaction)
-- `ethereum-ledger/` contract ABIs (attestation schema)
-
-Stardust binaries are now built and managed in the downstream repo directly.
-
-If you change any of these interfaces (binary CLI args, payload format, attestation schema, deployment.json structure), the Python CLI in the other repo will also need updating.
+If you change binary CLI args, payload format, or signature layout, update the consumer repo's `stego/signing.py`.
 
 ## Gotchas
 
-- `ui/` on OneDrive/WSL2 paths is very slow for `yarn install`. Docker avoids this.
-- Next.js cache in Docker volume `nextjs-cache`; clear with `docker volume rm ...nextjs-cache` if stale.
-- Hardhat node container state is in-memory; `docker compose down` + `up` resets everything.
-- `deployment.json` bridges deploy and demo scripts; demo detects stale addresses and falls back.
 - BLS12-381 unified-api binary crashes at `-O2`; use `-O1` (documented in Makefile).
-- There is no unified fine-grained unit-test framework across the repo; for many areas, the closest “single test” is a narrow demo target (`make test SCHEME=...`, one Hardhat script, or one UI page flow).
+- `unified-api/Makefile` uses `-O1` for all schemes due to this.
 
 ## When You Change These, Update Docs Too
 
 | What changed | Update |
 |---|---|
 | Signature sizes / payload layout | `docs/scheme-comparison.md`, `unified-api/README.md`, top-level `README.md` |
-| pHash embedding / max lengths | `docs/perceptual-hash-considerations.md`, `unified-api/README.md` |
-| Gas costs / network assumptions | `docs/ethereum-ledger-proposal.md`, `ethereum-ledger/README.md` |
-| Contracts / ABI | deploy scripts, `export-abis.js`, `docs/ethereum-ledger-proposal.md` |
-| Docker workflow | `docker-compose.yml` comments, `ethereum-ledger/README.md` |
-| UI pages or SE2 patches | `docs/ui-se2-customizations.md` |
-| Stardust integration | `docs/stardust-stego-demo.md` |
-| Binary interfaces or attestation schema | Also update downstream Python CLI in `perceptual-fuzzy-hash-test-vibe/stego/` |
-| C2PA resolution API | `c2pa-resolution/app.py`, `docs/c2pa-integration-plan.md` |
-| IPFS / Docker services | `docker-compose.yml`, `docs/c2pa-integration-plan.md` |
+| Binary interfaces (stego_payload_tool args) | Also update `consumer-sdproof-candidate/stego/signing.py` |
