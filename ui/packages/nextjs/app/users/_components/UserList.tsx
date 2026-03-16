@@ -4,10 +4,18 @@ import { useMemo } from "react";
 import Link from "next/link";
 import { useScaffoldEventHistory, useScaffoldReadContract } from "~~/hooks/scaffold-eth";
 
+import { SCHEME_NAMES } from "~~/utils/imageauth/constants";
+
 function UserRow({ address }: { address: string }) {
   const { data: keyCount } = useScaffoldReadContract({
     contractName: "KeyRegistry",
     functionName: "keyCount",
+    args: [address],
+  });
+
+  const { data: c2paKeyCount } = useScaffoldReadContract({
+    contractName: "KeyRegistry",
+    functionName: "c2paKeyCount",
     args: [address],
   });
 
@@ -25,9 +33,16 @@ function UserRow({ address }: { address: string }) {
     query: { enabled: activeIndex !== undefined && keyCount !== undefined && keyCount > 0n },
   });
 
+  const { data: repScore } = useScaffoldReadContract({
+    contractName: "ReputationRegistry",
+    functionName: "score",
+    args: [address],
+  });
+
   const count = keyCount ? Number(keyCount) : 0;
+  const c2paCount = c2paKeyCount ? Number(c2paKeyCount) : 0;
   const schemeName = activeKey
-    ? ({ 0: "UOV-80", 1: "UOV-100", 2: "BLS-BN158", 3: "BLS12-381" }[activeKey[1]] || "Unknown")
+    ? (SCHEME_NAMES[activeKey[1]] || "Unknown")
     : "-";
   const activatedAt = activeKey ? new Date(Number(activeKey[2]) * 1000) : null;
 
@@ -42,11 +57,16 @@ function UserRow({ address }: { address: string }) {
         {address}
       </td>
       <td className="text-center">{count}</td>
+      <td className="text-center">{c2paCount}</td>
       <td>{schemeName}</td>
+      <td className="text-center">{repScore?.toString() ?? "-"}</td>
       <td className="text-xs">{activatedAt ? activatedAt.toLocaleString() : "-"}</td>
       <td>
         <Link href={`/keys?address=${address}`} className="btn btn-xs btn-primary">
-          View Keys
+          Keys
+        </Link>
+        <Link href={`/reputation?address=${address}`} className="btn btn-xs btn-ghost ml-1">
+          Rep
         </Link>
       </td>
     </tr>
@@ -54,26 +74,39 @@ function UserRow({ address }: { address: string }) {
 }
 
 export function UserList() {
-  const { data: events, isLoading } = useScaffoldEventHistory({
+  const { data: blsEvents, isLoading: blsLoading } = useScaffoldEventHistory({
     contractName: "KeyRegistry",
     eventName: "KeyActivated",
     fromBlock: 0n,
   });
 
-  // Deduplicate: extract unique user addresses from KeyActivated events
+  const { data: c2paEvents, isLoading: c2paLoading } = useScaffoldEventHistory({
+    // @ts-ignore external contract
+    contractName: "KeyRegistry",
+    eventName: "C2PAKeyActivated",
+    fromBlock: 0n,
+  });
+
+  const isLoading = blsLoading || c2paLoading;
+
+  // Deduplicate: extract unique user addresses from both BLS and C2PA key events
   const uniqueUsers = useMemo(() => {
-    if (!events) return [];
     const seen = new Set<string>();
     const users: string[] = [];
-    for (const event of events) {
-      const addr = event.args?.user as string | undefined;
-      if (addr && !seen.has(addr.toLowerCase())) {
-        seen.add(addr.toLowerCase());
-        users.push(addr);
+    const addUsers = (events: any[] | undefined) => {
+      if (!events) return;
+      for (const event of events) {
+        const addr = event.args?.user as string | undefined;
+        if (addr && !seen.has(addr.toLowerCase())) {
+          seen.add(addr.toLowerCase());
+          users.push(addr);
+        }
       }
-    }
+    };
+    addUsers(blsEvents);
+    addUsers(c2paEvents);
     return users;
-  }, [events]);
+  }, [blsEvents, c2paEvents]);
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -96,8 +129,10 @@ export function UserList() {
                   <tr>
                     <th>Address</th>
                     <th className="hidden md:table-cell">Full Address</th>
-                    <th>Keys</th>
+                    <th>BLS Keys</th>
+                    <th>C2PA Keys</th>
                     <th>Active Scheme</th>
+                    <th>Reputation</th>
                     <th>Last Key Activated</th>
                     <th></th>
                   </tr>

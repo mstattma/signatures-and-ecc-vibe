@@ -7,30 +7,11 @@ import { decodeAbiParameters, parseAbi } from "viem";
 import { usePublicClient } from "wagmi";
 import externalContracts from "~~/contracts/externalContracts";
 import { useTargetNetwork } from "~~/hooks/scaffold-eth";
+import { IMAGE_ATTESTATION_TYPES, SCHEME_NAMES, ATT } from "~~/utils/imageauth/constants";
 
 const easAbi = parseAbi([
   "function getAttestation(bytes32 uid) view returns ((bytes32 uid, bytes32 schema, uint64 time, uint64 expirationTime, uint64 revocationTime, bytes32 refUID, address recipient, address attester, bool revocable, bytes data))",
 ]);
-
-const IMAGE_ATTESTATION_TYPES = [
-  { type: "bytes16", name: "sigPrefix" },
-  { type: "bytes", name: "signature" },
-  { type: "uint8", name: "scheme" },
-  { type: "bytes", name: "publicKey" },
-  { type: "bytes24", name: "pHash" },
-  { type: "uint16", name: "pHashVersion" },
-  { type: "bytes2", name: "salt" },
-  { type: "bytes32", name: "fileHash" },
-  { type: "bytes32", name: "metadataCID" },
-  { type: "string", name: "fileName" },
-] as const;
-
-const SCHEME_NAMES: Record<number, string> = {
-  0: "UOV-80",
-  1: "UOV-100",
-  2: "BLS-BN158",
-  3: "BLS12-381",
-};
 
 export default function ImageDetailPage() {
   const params = useParams();
@@ -73,16 +54,18 @@ export default function ImageDetailPage() {
           <div><strong>UID:</strong> <code className="break-all">{uid}</code></div>
           <div><strong>Attester:</strong> <Link href={`/keys?address=${att.attester}`} className="link link-primary break-all">{att.attester}</Link></div>
           <div><strong>Timestamp:</strong> {new Date(Number(att.time) * 1000).toLocaleString()}</div>
-          <div><strong>Scheme:</strong> {SCHEME_NAMES[Number(decoded[2])] || `Unknown (${decoded[2]})`}</div>
-          <div><strong>Signature Prefix:</strong> <code className="break-all">{decoded[0]}</code></div>
-          <div><strong>pHash Version:</strong> <code>{decoded[5].toString()}</code></div>
-          <div><strong>Salt:</strong> <code>{decoded[6]}</code></div>
-          <div><strong>Signature:</strong> <code className="break-all">{decoded[1]}</code></div>
-          <div><strong>Public Key:</strong> <code className="break-all">{decoded[3]}</code></div>
-          <div><strong>pHash:</strong> <code className="break-all">{decoded[4]}</code></div>
-          <div><strong>fileHash:</strong> <code className="break-all">{decoded[7]}</code></div>
-          <div><strong>metadataCID:</strong> <code className="break-all">{decoded[8]}</code></div>
-          <div><strong>fileName:</strong> <code className="break-all">{decoded[9]}</code></div>
+          <div><strong>Scheme:</strong> {SCHEME_NAMES[Number(decoded[ATT.scheme])] || `Unknown (${decoded[ATT.scheme]})`}</div>
+          <div><strong>Signature Prefix:</strong> <code className="break-all">{decoded[ATT.sigPrefix]}</code></div>
+          <div><strong>pHash Version:</strong> <code>{decoded[ATT.pHashVersion].toString()}</code></div>
+          <div><strong>Salt:</strong> <code>{decoded[ATT.salt]}</code></div>
+          <div><strong>Signature:</strong> <code className="break-all">{decoded[ATT.signature]}</code></div>
+          <div><strong>Public Key:</strong> <code className="break-all">{decoded[ATT.publicKey]}</code></div>
+          <div><strong>pHash:</strong> <code className="break-all">{decoded[ATT.pHash]}</code></div>
+          <div><strong>fileHash:</strong> <code className="break-all">{decoded[ATT.fileHash]}</code></div>
+          <div><strong>metadataCID:</strong> <code className="break-all">{decoded[ATT.metadataCID]}</code></div>
+          <div><strong>c2paCertHash:</strong> <code className="break-all">{decoded[ATT.c2paCertHash]}</code></div>
+          <div><strong>c2paSig:</strong> <code className="break-all text-xs">{String(decoded[ATT.c2paSig]).slice(0, 66)}...</code></div>
+          <div><strong>fileName:</strong> <code className="break-all">{decoded[ATT.fileName]}</code></div>
         </div>
       </div>
     </div>

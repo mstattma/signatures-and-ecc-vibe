@@ -5,7 +5,7 @@ import { Address } from "@scaffold-ui/components";
 import type { NextPage } from "next";
 import { hardhat } from "viem/chains";
 import { useAccount } from "wagmi";
-import { BugAntIcon, MagnifyingGlassIcon, KeyIcon, UsersIcon, FunnelIcon, PhotoIcon } from "@heroicons/react/24/outline";
+import { BugAntIcon, MagnifyingGlassIcon, KeyIcon, UsersIcon, FunnelIcon, PhotoIcon, ShieldCheckIcon } from "@heroicons/react/24/outline";
 import { useTargetNetwork } from "~~/hooks/scaffold-eth";
 
 const Home: NextPage = () => {
@@ -31,8 +31,8 @@ const Home: NextPage = () => {
             />
           </div>
           <p className="text-center text-lg max-w-2xl">
-            Explore registered users, signing keys, on-chain image records, cross-chain duplicate
-            detection, and transaction history for the stego-backed image authentication system.
+            Explore registered users, signing keys (BLS + C2PA), on-chain image records, cross-chain duplicate
+            detection, attester reputation, and C2PA manifest bindings for the image authentication system.
           </p>
           <p className="text-center text-lg max-w-2xl">
             Use the navigation above to inspect registered users, key lifecycles, image attestations,
@@ -41,7 +41,7 @@ const Home: NextPage = () => {
         </div>
 
         <div className="grow bg-base-300 w-full mt-16 px-8 py-12">
-          <div className="max-w-7xl mx-auto grid gap-6 md:grid-cols-2 xl:grid-cols-5">
+          <div className="max-w-7xl mx-auto grid gap-6 md:grid-cols-2 xl:grid-cols-6">
             <Link
               href="/users"
               className="flex flex-col bg-base-100 px-8 py-8 rounded-3xl shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all"
@@ -87,6 +87,17 @@ const Home: NextPage = () => {
             </Link>
 
             <Link
+              href="/reputation"
+              className="flex flex-col bg-base-100 px-8 py-8 rounded-3xl shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all"
+            >
+              <ShieldCheckIcon className="h-8 w-8 fill-secondary mb-4" />
+              <h2 className="text-xl font-bold mb-2">Reputation</h2>
+              <p className="text-sm text-left text-base-content/80">
+                View attester reputation scores, endorsement history, and dispute records.
+              </p>
+            </Link>
+
+            <Link
               href="/blockexplorer"
               className="flex flex-col bg-base-100 px-8 py-8 rounded-3xl shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all"
             >
@@ -108,7 +119,7 @@ const Home: NextPage = () => {
                   <Link href="/debug" className="link link-primary">
                     Debug Contracts
                   </Link>{" "}
-                  page for raw read/write interaction with `KeyRegistry` and `CrossChainBloomFilter`.
+                  page for raw read/write interaction with all contracts: `KeyRegistry`, `CrossChainBloomFilter`, `ImageAuthResolver`, and `ReputationRegistry`.
                 </p>
               </div>
             </div>

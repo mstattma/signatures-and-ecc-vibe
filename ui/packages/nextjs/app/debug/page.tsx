@@ -16,9 +16,13 @@ const Debug: NextPage = () => {
         <p className="text-neutral">
           Interact with the on-chain contracts for image authentication.
           <br />
-          <strong>KeyRegistry</strong>: Register, rotate, and revoke stego signing keys.
+          <strong>KeyRegistry</strong>: Register, rotate, and revoke BLS and C2PA (ES256/P-256) signing keys.
           <br />
           <strong>CrossChainBloomFilter</strong>: Check and manage cross-chain duplicate detection.
+          <br />
+          <strong>ImageAuthResolver</strong>: EAS resolver with P-256 signature verification, C2PA lookup, and dedup indexes.
+          <br />
+          <strong>ReputationRegistry</strong>: Attester reputation scores, endorsements, and dispute records.
         </p>
       </div>
     </>

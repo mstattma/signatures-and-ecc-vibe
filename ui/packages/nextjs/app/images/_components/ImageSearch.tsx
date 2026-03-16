@@ -17,25 +17,7 @@ const easAbi = parseAbi([
   "function getAttestation(bytes32 uid) view returns ((bytes32 uid, bytes32 schema, uint64 time, uint64 expirationTime, uint64 revocationTime, bytes32 refUID, address recipient, address attester, bool revocable, bytes data))",
 ]);
 
-const IMAGE_ATTESTATION_TYPES = [
-  { type: "bytes16", name: "sigPrefix" },
-  { type: "bytes", name: "signature" },
-  { type: "uint8", name: "scheme" },
-  { type: "bytes", name: "publicKey" },
-  { type: "bytes24", name: "pHash" },
-  { type: "uint16", name: "pHashVersion" },
-  { type: "bytes2", name: "salt" },
-  { type: "bytes32", name: "fileHash" },
-  { type: "bytes32", name: "metadataCID" },
-  { type: "string", name: "fileName" },
-] as const;
-
-const SCHEME_NAMES: Record<number, string> = {
-  0: "UOV-80",
-  1: "UOV-100",
-  2: "BLS-BN158",
-  3: "BLS12-381",
-};
+import { IMAGE_ATTESTATION_TYPES, SCHEME_NAMES, ATT } from "~~/utils/imageauth/constants";
 
 function normalizeHex(input: string) {
   return input.startsWith("0x") ? input : `0x${input}`;
@@ -261,10 +243,10 @@ export function ImageSearch() {
                           {record.att.attester}
                         </Link>
                       </td>
-                      <td><code className="text-xs break-all">{record.decoded[0]}</code></td>
-                      <td><code className="text-xs break-all">{record.decoded[6]}</code></td>
-                      <td><code className="text-xs break-all">{record.decoded[1]}</code></td>
-                      <td>{SCHEME_NAMES[Number(record.decoded[2])] || `Unknown (${record.decoded[2]})`}</td>
+                      <td><code className="text-xs break-all">{record.decoded[ATT.sigPrefix]}</code></td>
+                      <td><code className="text-xs break-all">{record.decoded[ATT.salt]}</code></td>
+                      <td><code className="text-xs break-all">{record.decoded[ATT.signature]}</code></td>
+                      <td>{SCHEME_NAMES[Number(record.decoded[ATT.scheme])] || `Unknown (${record.decoded[ATT.scheme]})`}</td>
                       <td><code className="text-xs break-all">{record.event.args?.pHashSaltKey || "-"}</code></td>
                     </tr>
                   ))}
@@ -330,16 +312,18 @@ export function ImageSearch() {
               <div><strong>Attestation UID:</strong> <Link href={`/images/${result.uid}`} className="link link-primary break-all">{result.uid}</Link></div>
               <div><strong>Attester:</strong> <Link href={`/keys?address=${result.attestation.attester}`} className="link link-primary break-all">{result.attestation.attester}</Link></div>
               <div><strong>Timestamp:</strong> {new Date(Number(result.attestation.time) * 1000).toLocaleString()}</div>
-              <div><strong>Scheme:</strong> {SCHEME_NAMES[Number(result.decoded[2])] || `Unknown (${result.decoded[2]})`}</div>
-              <div><strong>pHash Version:</strong> <code>{result.decoded[5].toString()}</code></div>
-              <div><strong>Salt:</strong> <code>{result.decoded[6]}</code></div>
-              <div className="md:col-span-2"><strong>Signature prefix:</strong> <code className="break-all">{result.decoded[0]}</code></div>
-              <div className="md:col-span-2"><strong>Signature:</strong> <code className="break-all">{result.decoded[1]}</code></div>
-              <div className="md:col-span-2"><strong>Public key:</strong> <code className="break-all">{result.decoded[3]}</code></div>
-              <div className="md:col-span-2"><strong>pHash:</strong> <code className="break-all">{result.decoded[4]}</code></div>
-              <div className="md:col-span-2"><strong>fileHash:</strong> <code className="break-all">{result.decoded[7]}</code></div>
-              <div className="md:col-span-2"><strong>metadataCID:</strong> <code className="break-all">{result.decoded[8]}</code></div>
-              <div className="md:col-span-2"><strong>fileName:</strong> <code className="break-all">{result.decoded[9]}</code></div>
+              <div><strong>Scheme:</strong> {SCHEME_NAMES[Number(result.decoded[ATT.scheme])] || `Unknown (${result.decoded[ATT.scheme]})`}</div>
+              <div><strong>pHash Version:</strong> <code>{result.decoded[ATT.pHashVersion].toString()}</code></div>
+              <div><strong>Salt:</strong> <code>{result.decoded[ATT.salt]}</code></div>
+              <div className="md:col-span-2"><strong>Signature prefix:</strong> <code className="break-all">{result.decoded[ATT.sigPrefix]}</code></div>
+              <div className="md:col-span-2"><strong>Signature:</strong> <code className="break-all">{result.decoded[ATT.signature]}</code></div>
+              <div className="md:col-span-2"><strong>Public key:</strong> <code className="break-all">{result.decoded[ATT.publicKey]}</code></div>
+              <div className="md:col-span-2"><strong>pHash:</strong> <code className="break-all">{result.decoded[ATT.pHash]}</code></div>
+              <div className="md:col-span-2"><strong>fileHash:</strong> <code className="break-all">{result.decoded[ATT.fileHash]}</code></div>
+              <div className="md:col-span-2"><strong>metadataCID:</strong> <code className="break-all">{result.decoded[ATT.metadataCID]}</code></div>
+              <div className="md:col-span-2"><strong>c2paCertHash:</strong> <code className="break-all">{result.decoded[ATT.c2paCertHash]}</code></div>
+              <div className="md:col-span-2"><strong>c2paSig:</strong> <code className="break-all text-xs">{String(result.decoded[ATT.c2paSig]).slice(0, 40)}...</code></div>
+              <div className="md:col-span-2"><strong>fileName:</strong> <code className="break-all">{result.decoded[ATT.fileName]}</code></div>
             </div>
           </div>
         </div>
@@ -349,7 +333,7 @@ export function ImageSearch() {
         <div className="card bg-base-200 shadow-xl">
           <div className="card-body">
             <h2 className="card-title">Images for Public Key</h2>
-            {recentRecords.filter(r => String(r.decoded?.[3]).toLowerCase() === publicKeySearch.toLowerCase()).length === 0 ? (
+            {recentRecords.filter(r => String(r.decoded?.[ATT.publicKey]).toLowerCase() === publicKeySearch.toLowerCase()).length === 0 ? (
               <div className="text-sm text-base-content/70">No loaded image records match this public key. Recent records are searched client-side from the currently loaded chain data.</div>
             ) : (
               <div className="overflow-x-auto">
@@ -365,13 +349,13 @@ export function ImageSearch() {
                   </thead>
                   <tbody>
                     {recentRecords
-                      .filter(r => String(r.decoded?.[3]).toLowerCase() === publicKeySearch.toLowerCase())
+                      .filter(r => String(r.decoded?.[ATT.publicKey]).toLowerCase() === publicKeySearch.toLowerCase())
                       .map((record, idx) => (
                         <tr key={idx}>
                           <td><Link href={`/images/${record.uid}`} className="link link-primary text-xs break-all">{record.uid}</Link></td>
-                          <td><code className="text-xs break-all">{record.decoded[6]}</code></td>
-                          <td>{SCHEME_NAMES[Number(record.decoded[2])] || `Unknown (${record.decoded[2]})`}</td>
-                          <td><code className="text-xs break-all">{record.decoded[4]}</code></td>
+                          <td><code className="text-xs break-all">{record.decoded[ATT.salt]}</code></td>
+                          <td>{SCHEME_NAMES[Number(record.decoded[ATT.scheme])] || `Unknown (${record.decoded[ATT.scheme]})`}</td>
+                          <td><code className="text-xs break-all">{record.decoded[ATT.pHash]}</code></td>
                           <td><Link href={`/keys?address=${record.att.attester}`} className="link link-primary text-xs break-all">{record.att.attester}</Link></td>
                         </tr>
                       ))}

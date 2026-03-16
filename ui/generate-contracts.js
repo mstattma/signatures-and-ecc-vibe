@@ -16,6 +16,7 @@ const CONTRACTS = {
   KeyRegistry: "keyRegistry",
   CrossChainBloomFilter: "bloomFilter",
   ImageAuthResolver: "resolver",
+  ReputationRegistry: "reputationRegistry",
   EAS: "eas",
   SchemaRegistry: "schemaRegistry",
 };
